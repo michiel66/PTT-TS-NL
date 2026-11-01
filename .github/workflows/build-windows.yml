@@ -1,0 +1,473 @@
+
+name: Bouw PTT-TS-NL Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: PTT-TS-NL Windows 64-bit
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    env:
+      WEBSPEAK3_COMMIT: c2b52b323d2ef10e388b2b600444a98390c5cc7a
+      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout PTT-TS-NL
+        uses: actions/checkout@v4
+
+      - name: Download bekende Windows TeamSpeak basis
+        uses: actions/checkout@v4
+        with:
+          repository: michiel66/PTTConnect-PC
+          ref: 8ed94f98dae6cfce47e90116fe58b2f4392a6919
+          path: pttbase
+
+      - name: Haal eigen Nederlandse Android-bestanden op
+        uses: actions/checkout@v4
+        with:
+          repository: michiel66/TS6-Droid-NL
+          path: android-nl
+
+      - name: Haal originele Android-schermen op
+        uses: actions/checkout@v4
+        with:
+          repository: YUAXI/TS6_Droid_CN
+          ref: 56d3b4d1991a4c565b1f75f419f4563e772f9614
+          path: android-source
+
+      - name: Node.js 22 installeren
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Python 3.12 installeren
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rust installeren
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: TeamSpeak broncode ophalen
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --recurse-submodules https://github.com/Moepchi/webspeak3.git upstream
+          cd upstream
+          git checkout "$WEBSPEAK3_COMMIT"
+          git submodule update --init --recursive
+
+      - name: TeamSpeak en PTT functies toepassen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python pttbase/windows/patch_webspeak3.py
+
+      - name: Android-kleuren en Nederlandse teksten overnemen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import json
+          import colorsys
+
+          kotlin = Path(
+              'android-source/app/src/main/kotlin/'
+              'dev/tsdroid/ui/theme/Theme.kt'
+          )
+          translation_script = Path(
+              'android-nl/scripts/maak_nederlands.py'
+          )
+          app_source = Path('upstream/web/src/App.tsx')
+          app_css = Path('upstream/web/src/App.css')
+
+          theme = kotlin.read_text(encoding='utf-8')
+          nl = translation_script.read_text(encoding='utf-8')
+
+          def color(pattern, description):
+              found = re.search(pattern, theme)
+              if not found:
+                  raise RuntimeError(
+                      f'Android kleur niet gevonden: {description}'
+                  )
+              return '#' + found.group(1)[2:].upper()
+
+          background = color(
+              r'surface = if \(isDark\) Color\(0x(FF[0-9A-Fa-f]{6})\)',
+              'background'
+          )
+          surface = color(
+              r'surfaceContainer = Color\(0x(FF[0-9A-Fa-f]{6})\)',
+              'surface'
+          )
+          surface_high = color(
+              r'surfaceContainerHigh = Color\(0x(FF[0-9A-Fa-f]{6})\)',
+              'surfaceHigh'
+          )
+          seed = color(
+              r'generateColorScheme\(Color\(0x(FF[0-9A-Fa-f]{6})\)',
+              'seedColor'
+          )
+
+          rgb = tuple(
+              int(seed[index:index+2], 16) / 255
+              for index in (1, 3, 5)
+          )
+          h, l, sat = colorsys.rgb_to_hls(*rgb)
+          primary_rgb = colorsys.hls_to_rgb(
+              h, .80, min(sat * .8, 1.0)
+          )
+          primary = '#' + ''.join(
+              f'{round(channel*255):02X}'
+              for channel in primary_rgb
+          )
+
+          match = re.search(
+              r'TRANSLATIONS = r"""(.*?)"""',
+              nl,
+              re.S
+          )
+          if not match:
+              raise RuntimeError(
+                  'Nederlandse Android-vertalingen niet gevonden'
+              )
+
+          translations = {}
+          for line in match.group(1).splitlines():
+              if '|' in line:
+                  key, value = line.split('|', 1)
+                  translations[key.strip()] = value.strip()
+
+          for key in (
+              'server', 'bookmarks', 'settings', 'ptt', 'connect'
+          ):
+              if key not in translations:
+                  raise RuntimeError(
+                      f'Nederlandse tekst ontbreekt: {key}'
+                  )
+
+          css = f'''
+          /* PTT-TS-NL Android Material 3 kleuren */
+          .ts-app.ts-theme-dark {{
+            --bg: {background};
+            --bg-toolbar-1: {surface};
+            --bg-toolbar-2: {surface_high};
+            --border-soft: #49454F;
+            --text: #E6E1E5;
+            --text-muted: #CAC4D0;
+            --input-bg: {surface};
+            --input-text: #E6E1E5;
+            --row-hover: {surface_high};
+            background: linear-gradient(
+              155deg,
+              {surface_high},
+              {background} 60%
+            ) !important;
+          }}
+
+          .ts-app.ts-theme-dark.ts-ptt-color-purple {{
+            --ptt-accent: {primary};
+            --ptt-accent-soft: #6750A4;
+            --ptt-accent-dark: #4F378B;
+            --ptt-glow: rgba(208,188,255,0.28);
+          }}
+
+          .ts-app.ts-theme-dark .ts-menubar,
+          .ts-app.ts-theme-dark .ts-toolbar {{
+            background: {surface} !important;
+            border-bottom-color: #49454F !important;
+          }}
+
+          .ts-app.ts-theme-dark .ts-tree-panel,
+          .ts-app.ts-theme-dark .ts-chat-panel,
+          .ts-app.ts-theme-dark .ts-server-row {{
+            background: {surface} !important;
+            border-radius: 14px !important;
+          }}
+
+          .ts-app.ts-theme-dark .ts-row:hover {{
+            background: {surface_high} !important;
+          }}
+
+          .ts-app.ts-theme-dark .ts-tree-search,
+          .ts-app.ts-theme-dark .ts-chat-input-row textarea {{
+            color: #E6E1E5 !important;
+            background: {background} !important;
+            border-radius: 12px !important;
+          }}
+          '''
+
+          with app_css.open('a', encoding='utf-8') as output:
+              output.write(css)
+
+          source = app_source.read_text(encoding='utf-8')
+          old = (
+              '  return "blue";\n}\n\n'
+              'function loadTransmissionMode()'
+          )
+          new = (
+              '  return "purple";\n}\n\n'
+              'function loadTransmissionMode()'
+          )
+          if source.count(old) != 1:
+              raise RuntimeError(
+                  'PTT Connect kleuropstartcode gewijzigd'
+              )
+          app_source.write_text(
+              source.replace(old, new, 1),
+              encoding='utf-8'
+          )
+
+          reference = Path('windows/android-reference')
+          reference.mkdir(parents=True, exist_ok=True)
+
+          (reference / 'material3-kleuren.json').write_text(
+              json.dumps({
+                  'source': 'TS6-Droid-NL Theme.kt',
+                  'seed': seed,
+                  'primary': primary,
+                  'background': background,
+                  'surface': surface,
+                  'surfaceHigh': surface_high
+              }, indent=2),
+              encoding='utf-8'
+          )
+
+          (reference / 'nederlandse-teksten.json').write_text(
+              json.dumps(
+                  translations,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+              encoding='utf-8'
+          )
+
+          print('Android-kleuren en vertalingen verwerkt')
+          PY
+
+      - name: PTT-TS-NL launcher en EXE voorbereiden
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          base = Path('pttbase/windows')
+          out = Path('windows')
+          out.mkdir(exist_ok=True)
+
+          main = (
+              base / 'main.cjs'
+          ).read_text(encoding='utf-8')
+
+          assert 'const PTT_PORT = 32137;' in main
+          assert '"persist:pttconnect"' in main
+
+          main = main.replace(
+              'const PTT_PORT = 32137;',
+              'const PTT_PORT = 32138;'
+          )
+          main = main.replace(
+              '"persist:pttconnect"',
+              '"persist:ptt-ts-nl"'
+          )
+          main = main.replace(
+              'PTT Connect',
+              'PTT-TS-NL'
+          )
+
+          (out / 'main.cjs').write_text(
+              main,
+              encoding='utf-8'
+          )
+
+          pkg = json.loads(
+              (base / 'package.json').read_text(
+                  encoding='utf-8'
+              )
+          )
+
+          pkg['name'] = 'ptt-ts-nl'
+          pkg['version'] = '0.1.0'
+          pkg['description'] = 'PTT-TS-NL TeamSpeak Windows'
+
+          pkg['build']['appId'] = 'nl.ptt.ts.windows'
+          pkg['build']['productName'] = 'PTT-TS-NL'
+
+          pkg['build']['files'] = [
+              'main.cjs',
+              'package.json',
+              'PTT-TS-NL.ico'
+          ]
+
+          pkg['build']['win']['icon'] = 'PTT-TS-NL.ico'
+          pkg['build']['win']['artifactName'] = (
+              'PTT-TS-NL-${version}-${arch}.${ext}'
+          )
+
+          pkg['build']['nsis']['installerIcon'] = (
+              'PTT-TS-NL.ico'
+          )
+          pkg['build']['nsis']['uninstallerIcon'] = (
+              'PTT-TS-NL.ico'
+          )
+          pkg['build']['nsis']['shortcutName'] = (
+              'PTT-TS-NL'
+          )
+          pkg['build']['nsis']['artifactName'] = (
+              'PTT-TS-NL-Setup-${version}-${arch}.${ext}'
+          )
+
+          pkg['build']['portable'] = {
+              'artifactName':
+              'PTT-TS-NL-Portable-${version}-${arch}.${ext}'
+          }
+
+          (out / 'package.json').write_text(
+              json.dumps(
+                  pkg,
+                  indent=2,
+                  ensure_ascii=False
+              ) + '\n',
+              encoding='utf-8'
+          )
+
+          shutil.copyfile(
+              base / 'PTTConnect.ico',
+              out / 'PTT-TS-NL.ico'
+          )
+
+          src = Path('upstream/web/src')
+
+          for file in src.rglob('*'):
+              if (
+                  file.is_file()
+                  and file.suffix in {
+                      '.tsx', '.ts', '.css', '.html'
+                  }
+              ):
+                  content = file.read_text(
+                      encoding='utf-8'
+                  )
+                  updated = content.replace(
+                      'PTT Connect', 'PTT-TS-NL'
+                  )
+                  updated = updated.replace(
+                      'WebSpeak3', 'PTT-TS-NL'
+                  )
+                  if content != updated:
+                      file.write_text(
+                          updated,
+                          encoding='utf-8'
+                      )
+
+          index = Path('upstream/web/index.html')
+          if index.exists():
+              html = index.read_text(encoding='utf-8')
+              html = html.replace(
+                  'PTT Connect', 'PTT-TS-NL'
+              )
+              html = html.replace(
+                  'WebSpeak3', 'PTT-TS-NL'
+              )
+              index.write_text(
+                  html,
+                  encoding='utf-8'
+              )
+
+          print('PTT-TS-NL Windows bestanden aangemaakt')
+          PY
+
+      - name: Native TeamSpeak connector bouwen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream/connector
+          cargo build --release
+
+      - name: Lokale TeamSpeak gateway bouwen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd upstream/gateway
+          npm ci
+          npm run build
+          npm prune --omit=dev
+
+      - name: Windows interface bouwen
+        shell: bash
+        env:
+          VITE_DONATE_URL: ""
+        run: |
+          set -euo pipefail
+          cd upstream/web
+          npm ci
+          npm run build
+
+      - name: Windows runtime bundelen
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p windows/runtime/web
+          mkdir -p windows/runtime/gateway
+          mkdir -p windows/runtime/connector
+
+          cp -R upstream/web/dist/. \
+            windows/runtime/web/
+
+          cp -R upstream/gateway/dist \
+            windows/runtime/gateway/dist
+
+          cp -R upstream/gateway/node_modules \
+            windows/runtime/gateway/node_modules
+
+          cp \
+            upstream/connector/target/release/ts-connector.exe \
+            windows/runtime/connector/ts-connector.exe
+
+          cp upstream/LICENSE \
+            windows/runtime/LICENSE-WebSpeak3.txt
+
+          cp android-source/LICENSE \
+            windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
+
+          mkdir -p windows/runtime/android-reference
+
+          cp windows/android-reference/*.json \
+            windows/runtime/android-reference/
+
+          test -s \
+            windows/runtime/connector/ts-connector.exe
+
+          node --check windows/main.cjs
+
+      - name: Windows installer en portable EXE bouwen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd windows
+          npm install --no-audit --no-fund
+          npm run dist
+
+      - name: EXE bestanden publiceren
+        uses: actions/upload-artifact@v4
+        with:
+          name: PTT-TS-NL-Windows-64bit
+          path: windows/dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
