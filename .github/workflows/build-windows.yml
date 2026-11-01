@@ -1,5 +1,5 @@
 
-name: Bouw PTT Direct Windows 0.6.1 - TG Voorburg Heerlen
+name: Bouw PTT Direct Windows 0.6.2 - TG favorieten en stabiele microfoon
 
 on:
   workflow_dispatch:
@@ -23,6 +23,13 @@ jobs:
     steps:
       - name: Project ophalen
         uses: actions/checkout@v4
+
+      - name: Werkende PTT Direct 0.6.1 ophalen
+        uses: actions/checkout@v4
+        with:
+          repository: michiel66/PTT-TS-NL
+          ref: 75b759e0413641a56fefc593f2cd8d97336b06ee
+          path: green-061
 
       - name: Eerder groen gebouwde Android-weergave ophalen
         uses: actions/checkout@v4
@@ -93,63 +100,33 @@ jobs:
           set -euo pipefail
           python pttbase/windows/patch_webspeak3.py
 
-      - name: Werkende Multicolor 0.6.0 zonder wijzigingen toepassen
+      - name: Groene interface 0.6.1 volledig terugzetten
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PYCODE'
+          python - <<'PY'
           from pathlib import Path
-
-          source = Path(
-              'green-060/.github/workflows/build-windows.yml'
-          ).read_text(encoding='utf-8')
-
-          for name in [
-              'Bewezen werkende TeamSpeak interface achtergrond en rogerpiep toepassen',
-              'Multicolor 0.6.0 design uit voorbeeldfoto toepassen',
-          ]:
-              marker = (
-                  f'      - name: {name}\n'
-                  '        shell: bash\n'
-                  '        run: |\n'
-              )
-
+          source = Path('green-061/.github/workflows/build-windows.yml').read_text(encoding='utf-8')
+          steps = [
+              'Werkende Multicolor 0.6.0 zonder wijzigingen toepassen',
+              'PTT Direct naam, talkgroepen en Voorburg CH-kanalen',
+          ]
+          for name in steps:
+              marker = f'      - name: {name}\n        shell: bash\n        run: |\n'
               if source.count(marker) != 1:
-                  raise RuntimeError(
-                      f'Bronstap ontbreekt: {name}'
-                  )
-
-              block = source.split(marker, 1)[1].split(
-                  '\n      - name:', 1
-              )[0]
-
-              lines = [
-                  line[10:] if line.startswith('          ') else line
-                  for line in block.splitlines()
-              ]
-
-              start = lines.index("python - <<'PY'") + 1
-              end = len(lines) - 1 - lines[::-1].index('PY')
-
+                  raise RuntimeError(f'Bewezen stap ontbreekt: {name}')
+              section = source.split(marker, 1)[1].split('\n      - name:', 1)[0]
+              lines = [line[10:] if line.startswith('          ') else line for line in section.splitlines()]
+              start = lines.index("python - <<'PYCODE'") + 1 if "python - <<'PYCODE'" in lines else lines.index("python - <<'PY'") + 1
+              terminator = 'PYCODE' if "python - <<'PYCODE'" in lines else 'PY'
+              end = len(lines) - 1 - lines[::-1].index(terminator)
               code = '\n'.join(lines[start:end]) + '\n'
+              print(f'Veilig overnemen uit groene build: {name}',flush=True)
+              exec(compile(code,name,'exec'), {'__name__': '__main__'})
+          print('Werkende multicolor, TG-103, TG-108, PTT, rogerpiep en audio behouden')
+          PY
 
-              print(
-                  f'Werkende stap uitvoeren: {name}',
-                  flush=True
-              )
-
-              exec(
-                  compile(code, name, 'exec'),
-                  {'__name__': '__main__'}
-              )
-
-          print(
-              'Multicolor design, PTT, rogerpiep '
-              'en achtergrond behouden'
-          )
-          PYCODE
-
-      - name: PTT Direct naam, talkgroepen en Voorburg CH-kanalen
+      - name: PTT Direct 0.6.2 verbeteringen toevoegen
         shell: bash
         run: |
           set -euo pipefail
@@ -158,487 +135,326 @@ jobs:
           import json
           import re
 
-          app_file = Path('upstream/web/src/App.tsx')
-          css_file = Path('upstream/web/src/App.css')
-          pkg_file = Path('windows/package.json')
+          app_path = Path('upstream/web/src/App.tsx')
+          css_path = Path('upstream/web/src/App.css')
+          main_path = Path('windows/main.cjs')
+          pkg_path = Path('windows/package.json')
+          app = app_path.read_text(encoding='utf-8')
 
-          app = app_file.read_text(encoding='utf-8')
-
-          def once(old: str, new: str, label: str):
+          def once(old, new, what):
               global app
-
-              count = app.count(old)
-
-              if count != 1:
-                  raise RuntimeError(
-                      f'{label}: verwacht 1, gevonden {count}'
-                  )
-
+              n = app.count(old)
+              if n != 1:
+                  raise RuntimeError(f'{what}: verwacht 1 overeenkomst; gevonden {n}')
               app = app.replace(old, new, 1)
 
-          # ===========================================
-          # 1. NAAM PTT DIRECT
-          # ===========================================
+          # Alleen nieuw gedrag; niet de bestaande multicolor-lay-out opnieuw opbouwen.
+          # De oude versies komen van een vastgepinde, succesvol gebouwde commit.
 
-          # Bestaande multicolor ontwerp blijft gelijk.
+          types = r'''
+          type PttDirectFavorite = {
+            id: string;
+            label: string;
+            host: string;
+          };
 
-          if app.count('PTT Communicator') < 2:
-              raise RuntimeError(
-                  'Titel PTT Communicator ontbreekt'
-              )
+          function loadPttDirectFavorites(): PttDirectFavorite[] {
+            try {
+              const parsed: unknown = JSON.parse(
+                localStorage.getItem("pttdirect:tg-favorites") || "[]"
+              );
+              if (!Array.isArray(parsed)) return [];
+              return parsed.filter((value): value is PttDirectFavorite =>
+                value !== null && typeof value === "object" &&
+                typeof value.id === "string" &&
+                typeof value.label === "string" &&
+                typeof value.host === "string"
+              );
+            } catch {
+              return [];
+            }
+          }
 
-          app = app.replace(
-              'PTT Communicator',
-              'PTT Direct'
-          )
-
-          # TeamSpeak tekst onder het logo weghalen.
-
-          once(
-              '<small>TeamSpeak · Push-to-Talk</small>',
-              '',
-              'Ondertitel verwijderen'
-          )
-
-          # ===========================================
-          # 2. TALKGROEPEN
-          # ===========================================
-
-          # Gebruiker hoeft alleen naam en talkgroep
-          # te kiezen.
-          #
-          # Voorburg: ptt.mijnts3.nl
-          # Heerlen:  heerlen.mijnts3.nl
-          #
-          # Serveradres niet zichtbaar in aanmelding.
-
-          state = r'''
-            const [
-              pttDirectGroup,
-              setPttDirectGroup
-            ] = useState<"voorburg" | "heerlen">(
-              () =>
-                localStorage.getItem("pttdirect:group")
-                  === "heerlen"
-                    ? "heerlen"
-                    : "voorburg"
-            );
-
-            const [
-              pttDirectName,
-              setPttDirectName
-            ] = useState("");
           '''
+          once('function AppInner() {', types+'function AppInner() {', 'Hulpfunctie favorieten')
 
-          once(
-              'function AppInner() {',
-              'function AppInner() {' + state,
-              'Talkgroep en naam'
+          old_state = r'''  const [pttDirectGroup, setPttDirectGroup] = useState<"voorburg" | "heerlen">(
+              () => localStorage.getItem("pttdirect:group") === "heerlen" ? "heerlen" : "voorburg"
+            );
+            const [pttDirectName, setPttDirectName] = useState("");'''
+
+          new_state = r'''  const [pttDirectGroup, setPttDirectGroup] = useState<string>(
+              () => localStorage.getItem("pttdirect:group") || "voorburg"
+            );
+            const [pttDirectName, setPttDirectName] = useState(
+              () => localStorage.getItem("pttdirect:name") || ""
+            );
+            const [pttDirectFavorites, setPttDirectFavorites] = useState<PttDirectFavorite[]>(
+              loadPttDirectFavorites
+            );
+            const [pttDirectFavoritesOpen, setPttDirectFavoritesOpen] = useState(false);
+            const [pttDirectFavoriteName, setPttDirectFavoriteName] = useState("");
+            const [pttDirectFavoriteHost, setPttDirectFavoriteHost] = useState("");
+            const [pttDirectFavoriteError, setPttDirectFavoriteError] = useState("");
+
+            const pttDirectGroups: PttDirectFavorite[] = [
+              { id: "voorburg", label: "TG-103 Voorburg", host: "ptt.mijnts3.nl" },
+              { id: "heerlen", label: "TG-108 Heerlen", host: "heerlen.mijnts3.nl" },
+              ...pttDirectFavorites,
+            ];
+
+            useEffect(() => {
+              localStorage.setItem("pttdirect:tg-favorites", JSON.stringify(pttDirectFavorites));
+            }, [pttDirectFavorites]);
+
+            useEffect(() => {
+              localStorage.setItem("pttdirect:group", pttDirectGroup);
+            }, [pttDirectGroup]);
+          '''
+          state_pattern = (
+              r'  const \[\s*pttDirectGroup,\s*setPttDirectGroup\s*\]'
+              r'\s*=\s*useState<"voorburg"\s*\|\s*"heerlen">\('
+              r'[\s\S]*?\);\s*'
+              r'const \[\s*pttDirectName,\s*setPttDirectName\s*\]'
+              r'\s*=\s*useState\(""\);'
           )
+          app, count = re.subn(state_pattern, lambda _: new_state, app, count=1)
+          if count != 1:
+              raise RuntimeError(f'Gebruikersnaam en TG-favorieten: {count} overeenkomsten')
 
-          # ===========================================
-          # 3. AANMELDEN BIJ OPSTARTEN
-          # ===========================================
-
-          once(
-              'const [connectDialogOpen, setConnectDialogOpen] = useState(false);',
-              'const [connectDialogOpen, setConnectDialogOpen] = useState(true);',
-              'Aanmeldvenster bij opstart'
+          # Behoud de bestaande eenvoudige aanmeldkaart, breid alleen de selectie uit.
+          connection_pattern = (
+              r'const server\s*=\s*pttDirectGroup\s*===\s*"voorburg"'
+              r'\s*\?\s*"ptt\.mijnts3\.nl"\s*:\s*"heerlen\.mijnts3\.nl";'
+              r'\s*localStorage\.setItem\(\s*"pttdirect:group",\s*pttDirectGroup\s*\);'
+              r'\s*handleConnect\(\{\s*host:\s*server,'
           )
+          connection_replacement = '''const target = pttDirectGroups.find(
+                                    group => group.id === pttDirectGroup
+                                  ) || pttDirectGroups[0];
+                                  if (!target) return;
+                                  localStorage.setItem("pttdirect:name", name);
+                                  localStorage.setItem("pttdirect:group", target.id);
+                                  // Sluit de oude sessie voor de nieuwe verbinding.
+                                  micCaptureRef.current?.setPushToTalk(false);
+                                  handleDisconnectAll();
+                                  handleConnect({
+                                    host: target.host,'''
+          app, count = re.subn(connection_pattern, lambda _: connection_replacement, app, count=1)
+          if count != 1:
+              raise RuntimeError(f'Serverwissel: {count} overeenkomsten')
 
-          # ===========================================
-          # 4. GEBRUIKERSNAAM
-          # ===========================================
+          select_pattern = r'<select\s+id="pttdirect-group"\s+value=\{pttDirectGroup\}[\s\S]*?</select>'
+          select_replacement = '''<select id="pttdirect-group" value={pttDirectGroup}
+                                  onChange={event => setPttDirectGroup(event.target.value)}>
+                                  {pttDirectGroups.map(group => (
+                                    <option key={group.id} value={group.id}>
+                                      {group.label}
+                                    </option>
+                                  ))}
+                                </select>'''
+          app, count = re.subn(select_pattern, lambda _: select_replacement, app, count=1)
+          if count != 1:
+              raise RuntimeError(f'TG selectie: {count} overeenkomsten')
 
-          # Geen automatische toevoeging
-          # van PTT Connect aan de naam.
+          name_pattern = r'onChange=\{event =>\s*setPttDirectName\(\s*event\.target\.value\s*\)\s*\}'
+          name_replacement = '''onChange={event => {
+                                    setPttDirectName(event.target.value);
+                                    localStorage.setItem("pttdirect:name", event.target.value);
+                                  }}'''
+          app, count = re.subn(name_pattern, lambda _: name_replacement, app, count=1)
+          if count != 1:
+              raise RuntimeError(f'Naam opslaan: {count} overeenkomsten')
 
-          start = app.find(
-              'function makePttConnectNickname('
+          # Verwijder zichtbare TeamSpeak-tekst waar de gebruiker dit aanwijst.
+          for old, new in [
+              ('Niet verbonden met TeamSpeak', 'Niet verbonden'),
+              ('<strong>PTT-TS-NL</strong>', '<strong>PTT Direct</strong>'),
+              ('💬 TeamSpeak chat', '💬 Chat'),
+          ]:
+              if old not in app:
+                  raise RuntimeError(f'Verwachte zichtbare tekst ontbreekt: {old}')
+              app = app.replace(old, new)
+
+          # Het oude myTeamSpeak-favorietenvenster is vervangen door eigen TG-favorieten.
+          once('''<button onClick={() => {setFavoritesDialogMode({kind:"manage"});setTsNlPanel(null);}}>⭐ Favorieten</button>''', '''<button onClick={() => {
+                                    setTsNlPanel(null);
+                                    setPttDirectFavoriteError("");
+                                    setPttDirectFavoritesOpen(true);
+                                  }}>⭐ Favorieten</button>''', 'Favorietenmenu zonder myTeamSpeak Bookmarks')
+
+          # In serverinformatie de gekozen TG tonen, nooit een adres.
+          info_pattern = (
+              r'\{\s*host\.trim\(\)\.toLowerCase\(\)\s*===\s*"ptt\.mijnts3\.nl"'
+              r'\s*\?\s*"TG-103 Voorburg"\s*:\s*"TG-108 Heerlen"\s*\}'
           )
+          info_replacement = '''{pttDirectGroups.find(group =>
+                                      group.host.toLowerCase() === host.trim().toLowerCase()
+                                    )?.label || "Geen talkgroep"}'''
+          app, count = re.subn(info_pattern, lambda _: info_replacement, app, count=1)
+          if count != 1:
+              raise RuntimeError(f'Serverinformatie TG-label: {count} overeenkomsten')
 
-          end = app.find(
-              'function redPttDots(',
-              start
-          )
-
-          if start < 0 or end <= start:
-              raise RuntimeError(
-                  'Bestaande nickname functie ontbreekt'
-              )
-
-          app = (
-              app[:start] +
-              'function makePttConnectNickname(value: string): string {\n'
-              '  return value.trim().slice(0, 30);\n'
-              '}\n\n' +
-              app[end:]
-          )
-
-          # ===========================================
-          # 5. NIEUW EENVOUDIG AANMELDSCHERM
-          # ===========================================
-
-          # Oude uitgebreide inlogscherm vervangen.
-          # Hoofdinterface verandert niet.
-
-          login = r'''
-                {connectDialogOpen && (
+          # Favorietenbeheer in hetzelfde bestaande dialog-thema.
+          favorite_dialog = r'''
+                {pttDirectFavoritesOpen && (
                   <div className="ts-dialog-backdrop">
-                    <form
-                      className="ts-dialog pttdirect-login"
-
-                      onSubmit={event => {
+                    <div className="ts-dialog pttdirect-favorites" role="dialog" aria-label="TG favorieten">
+                      <div className="pttdirect-favorites-head">
+                        <h2>Mijn TG-favorieten</h2>
+                        <button type="button" aria-label="Sluiten" onClick={() =>
+                          setPttDirectFavoritesOpen(false)}>×</button>
+                      </div>
+                      <p>Voeg een server toe als eigen talkgroep.</p>
+                      <form onSubmit={event => {
                         event.preventDefault();
-
-                        const name =
-                          pttDirectName.trim();
-
-                        if (!name || connecting) {
+                        const name = pttDirectFavoriteName.trim().slice(0, 36);
+                        const address = pttDirectFavoriteHost.trim().toLowerCase();
+                        if (!name || !/^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::[0-9]{1,5})?$/.test(address)) {
+                          setPttDirectFavoriteError("Vul een naam en een geldig serveradres in.");
                           return;
                         }
-
-                        const server =
-                          pttDirectGroup === "voorburg"
-                            ? "ptt.mijnts3.nl"
-                            : "heerlen.mijnts3.nl";
-
-                        localStorage.setItem(
-                          "pttdirect:group",
-                          pttDirectGroup
-                        );
-
-                        handleConnect({
-                          host: server,
-                          nickname: name,
-                          serverPassword: "",
-                          channelPassword: "",
-                          defaultChannel: "",
-                          privilegeKey: "",
-                          serverType: "teamspeak",
-                        });
-                      }}
-                    >
-                      <h2>PTT Direct</h2>
-
-                      <p>
-                        Voer je naam in en kies
-                        je talkgroep.
-                      </p>
-
-                      <label htmlFor="pttdirect-name">
-                        Gebruikersnaam
-                      </label>
-
-                      <input
-                        id="pttdirect-name"
-                        type="text"
-                        value={pttDirectName}
-                        autoFocus
-                        maxLength={30}
-                        required
-                        placeholder="Vul je naam in"
-
-                        onChange={event =>
-                          setPttDirectName(
-                            event.target.value
-                          )
+                        if (pttDirectGroups.some(group => group.host.toLowerCase() === address)) {
+                          setPttDirectFavoriteError("Deze server bestaat al in de TG-lijst.");
+                          return;
                         }
-                      />
-
-                      <label htmlFor="pttdirect-group">
-                        Talkgroep
-                      </label>
-
-                      <select
-                        id="pttdirect-group"
-                        value={pttDirectGroup}
-
-                        onChange={event =>
-                          setPttDirectGroup(
-                            event.target.value as
-                              "voorburg" | "heerlen"
-                          )
-                        }
-                      >
-                        <option value="voorburg">
-                          TG-103 Voorburg
-                        </option>
-
-                        <option value="heerlen">
-                          TG-108 Heerlen
-                        </option>
-                      </select>
-
-                      <div className="pttdirect-login-actions">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setConnectDialogOpen(false)
-                          }
-                        >
-                          Annuleren
-                        </button>
-
-                        <button
-                          type="submit"
-                          disabled={
-                            !pttDirectName.trim() ||
-                            connecting
-                          }
-                        >
-                          {connecting
-                            ? "Verbinden..."
-                            : "Verbinden"}
-                        </button>
+                        const used = new Set(pttDirectGroups.map(group =>
+                          Number(group.label.match(/^TG-(\d+)/)?.[1] || 0)
+                        ));
+                        let number = 200;
+                        while (used.has(number)) number += 1;
+                        const newGroup = {
+                          id: `favorite-${randomId()}`,
+                          label: `TG-${number} ${name}`,
+                          host: address
+                        };
+                        setPttDirectFavorites(current => [...current, newGroup]);
+                        setPttDirectGroup(newGroup.id);
+                        setPttDirectFavoriteName("");
+                        setPttDirectFavoriteHost("");
+                        setPttDirectFavoriteError("");
+                      }}>
+                        <label htmlFor="pttdirect-fav-name">Servernaam</label>
+                        <input id="pttdirect-fav-name" type="text" maxLength={36}
+                          placeholder="Bijvoorbeeld Rotterdam" value={pttDirectFavoriteName}
+                          onChange={event => setPttDirectFavoriteName(event.target.value)} />
+                        <label htmlFor="pttdirect-fav-host">Serveradres</label>
+                        <input id="pttdirect-fav-host" type="text"
+                          placeholder="bijvoorbeeld server.domein.nl" value={pttDirectFavoriteHost}
+                          onChange={event => setPttDirectFavoriteHost(event.target.value)} />
+                        <button type="submit">Als TG toevoegen</button>
+                        {pttDirectFavoriteError && <p className="pttdirect-error" role="alert">
+                          {pttDirectFavoriteError}
+                        </p>}
+                      </form>
+                      <div className="pttdirect-favorites-list">
+                        {pttDirectFavorites.length === 0 && <p>Er zijn nog geen extra talkgroepen.</p>}
+                        {pttDirectFavorites.map(group => (
+                          <div className="pttdirect-favorite-entry" key={group.id}>
+                            <strong>{group.label}</strong>
+                            <button type="button" onClick={() => {
+                              setPttDirectFavorites(current => current.filter(item => item.id !== group.id));
+                              if (pttDirectGroup === group.id) setPttDirectGroup("voorburg");
+                            }}>Verwijderen</button>
+                          </div>
+                        ))}
                       </div>
-
-                      {connectError && (
-                        <p
-                          role="alert"
-                          className="pttdirect-error"
-                        >
-                          Verbinding mislukt.
-                          Probeer opnieuw.
-                        </p>
-                      )}
-                    </form>
+                    </div>
                   </div>
                 )}
           '''
-
-          dialog_pattern = (
-              r'\{connectDialogOpen && \('
-              r'\s*<ConnectDialog\b'
-              r'[\s\S]*?\/>\s*\)\}'
-          )
-
-          found = list(
-              re.finditer(
-                  dialog_pattern,
-                  app
-              )
-          )
-
-          if len(found) != 1:
-              raise RuntimeError(
-                  'Aanmeldvenster: verwacht 1, '
-                  f'gevonden {len(found)}'
-              )
-
-          original_dialog = found[0].group()
-
-          # Oude dialoog bewaren voor bestaande
-          # TypeScript-referenties, niet renderen.
-
-          hidden_dialog = original_dialog.replace(
-              '{connectDialogOpen && (',
-              '{false && (',
-              1
-          )
-
-          app = (
-              app[:found[0].start()] +
-              login.strip('\n') +
-              '\n' +
-              hidden_dialog +
-              app[found[0].end():]
-          )
-
-          # ===========================================
-          # 6. VOORBURG ALLEEN CH-KANALEN
-          # ===========================================
-
-          # TG-103 Voorburg:
-          # alleen namen die beginnen met CH.
-          #
-          # TG-108 Heerlen:
-          # alle kanalen tonen.
-          #
-          # De TeamSpeak-server wordt niet aangepast.
-
+          login_anchor = r'\{connectDialogOpen && \(\s*<div className="ts-dialog-backdrop">'
           app, count = re.subn(
-              r'(<TsNlTree\s+)channels=\{channels\}',
-
-              lambda m: m.group(1) + '''
-                channels={
-                  host.trim().toLowerCase() ===
-                    "ptt.mijnts3.nl"
-
-                    ? channels
-                        .filter(ch =>
-                          /^CH/i.test(ch.name.trim())
-                        )
-                        .map(ch => ({
-                          ...ch,
-                          parent: 0
-                        }))
-
-                    : channels
-                }''',
-
+              login_anchor,
+              lambda match: favorite_dialog + match.group(0),
               app,
               count=1,
           )
-
           if count != 1:
-              raise RuntimeError(
-                  'Voorburg CH-kanaalfilter: '
-                  f'verwacht 1, gevonden {count}'
-              )
+              raise RuntimeError(f'Eigen TG favorieten dialoog: {count} overeenkomsten')
 
-          # ===========================================
-          # 7. TALKGR0EP NAAM TONEN
-          # ===========================================
+          # Microfoon opnieuw starten indien die is gestopt bij serverwissel.
+          once('''  // Enable the mic automatically on page load (voice activation still gates''', '''  useEffect(() => {
+              if (connected && !micCaptureRef.current) {
+                void startMic();
+              }
+            }, [connected]);
 
-          # Geen serveradres in de serverinformatie.
+            // Enable the mic automatically on page load (voice activation still gates''', 'Microfoon na TG-wissel herstellen')
 
-          once(
-              '{serverName || host || "Geen server"}',
+          # Electron meldt de actieve verbindingen af voordat Windows afsluit.
+          once('''  const closeSessionTab = (id: string) => {''', '''  useEffect(() => {
+              const onPttDirectQuit = () => {
+                micCaptureRef.current?.setPushToTalk(false);
+                handleDisconnectAll();
+              };
+              window.addEventListener("pttdirect:logout", onPttDirectQuit);
+              return () => window.removeEventListener("pttdirect:logout", onPttDirectQuit);
+              // Electron stuurt het signaal uitsluitend wanneer de gebruiker afsluit.
+              // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, []);
 
-              '''{
-                host.trim().toLowerCase() ===
-                  "ptt.mijnts3.nl"
+            const closeSessionTab = (id: string) => {''', 'Uitloggen bij Windows kruisje')
 
-                  ? "TG-103 Voorburg"
-                  : "TG-108 Heerlen"
-              }''',
+          app_path.write_text(app, encoding='utf-8')
 
-              'Geen adres in serverinformatie'
-          )
-
-          app_file.write_text(
-              app,
-              encoding='utf-8'
-          )
-
-          # ===========================================
-          # 8. OPMAAK VAN ALLEEN HET AANMELDSCHERM
-          # ===========================================
-
-          # Bestaande multicolor interface blijft
-          # volledig ongewijzigd.
-
-          with css_file.open(
-              'a',
-              encoding='utf-8'
-          ) as css:
-
-              css.write(r'''
-          /* PTT Direct aanmelding */
-
-          .pttdirect-login {
-            width:min(420px,calc(100vw - 30px));
-            display:flex;
-            flex-direction:column;
-            gap:13px;
-            padding:28px;
-            border-radius:20px;
-            background:linear-gradient(
-              135deg,
-              #17213c,
-              #261934
-            );
-            color:#f5f1ff;
-            border:1px solid rgba(188,132,236,.65);
-            box-shadow:0 24px 75px rgba(0,0,0,.6);
+          with css_path.open('a', encoding='utf-8') as file:
+              file.write(r'''
+          /* Alleen de nieuwe favorietendialoog; bestaande multicolor blijft intact. */
+          .pttdirect-favorites {
+            width:min(520px,calc(100vw - 28px)); max-height:85vh; overflow:auto;
+            display:flex; flex-direction:column; gap:12px; padding:24px;
+            border-radius:19px; background:linear-gradient(135deg,#17213c,#261934);
+            color:#f5f1ff; border:1px solid rgba(188,132,236,.65);
+            box-shadow:0 25px 80px #000a;
           }
-
-          .pttdirect-login h2 {
-            margin:0;
-            color:white;
-            font-size:25px;
-          }
-
-          .pttdirect-login p {
-            margin:0 0 5px;
-            color:#d2d8ec;
-          }
-
-          .pttdirect-login label {
-            font-size:14px;
-            font-weight:600;
-            color:#eff1ff;
-          }
-
-          .pttdirect-login input,
-          .pttdirect-login select {
-            padding:12px 13px;
-            min-height:46px;
-            width:100%;
-            box-sizing:border-box;
-            border-radius:10px;
-            background:#121a32;
-            color:#fff;
-            border:1px solid #647498;
-            font-size:16px;
-          }
-
-          .pttdirect-login input:focus,
-          .pttdirect-login select:focus {
-            outline:2px solid #22d6c8;
-            outline-offset:1px;
-          }
-
-          .pttdirect-login-actions {
-            display:flex;
-            justify-content:flex-end;
-            gap:10px;
-            margin-top:7px;
-          }
-
-          .pttdirect-login-actions button {
-            border:1px solid #ae8fe8;
-            border-radius:10px;
-            padding:10px 17px;
-            color:white;
-            background:#533c7e;
-            cursor:pointer;
-          }
-
-          .pttdirect-login-actions button[type="submit"] {
-            background:linear-gradient(
-              100deg,
-              #0b9c96,
-              #087b83
-            );
-            border-color:#30dacf;
-            font-weight:700;
-          }
-
-          .pttdirect-login-actions button:disabled {
-            opacity:.45;
-            cursor:default;
-          }
-
-          .pttdirect-error {
-            color:#ffc2bc!important;
-          }
+          .pttdirect-favorites-head {display:flex;justify-content:space-between;align-items:center;gap:12px}
+          .pttdirect-favorites h2 {margin:0;font-size:23px}
+          .pttdirect-favorites-head button {font-size:26px;border-radius:10px;cursor:pointer}
+          .pttdirect-favorites form {display:flex;flex-direction:column;gap:9px}
+          .pttdirect-favorites form label {font-weight:600}
+          .pttdirect-favorites form input {padding:12px;border-radius:10px;background:#101b32;color:white;border:1px solid #66759b;font-size:16px}
+          .pttdirect-favorites form button {padding:12px;border-radius:10px;background:#0e9d95;color:#fff;font-weight:700;border:1px solid #25d6ca;cursor:pointer}
+          .pttdirect-favorites-list {display:flex;flex-direction:column;gap:8px;max-height:220px;overflow:auto}
+          .pttdirect-favorite-entry {display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px;background:#697bb032;border-radius:12px}
+          .pttdirect-favorite-entry button {padding:8px;border:1px solid #a39dd3;border-radius:9px;background:#514079;color:white;cursor:pointer}
           ''')
 
-          # ===========================================
-          # 9. VERSIE
-          # ===========================================
+          main = main_path.read_text(encoding='utf-8')
+          if main.count('"PTT Connect"') < 1:
+              raise RuntimeError('Windows venstertitel ontbreekt')
+          main = main.replace('"PTT Connect"', '"PTT Direct"')
+          anchor = '  mainWindow.removeMenu();'
+          if main.count(anchor) != 1:
+              raise RuntimeError('Electron venster in script niet gevonden')
+          main = main.replace(anchor, '''  // Windows kruisje: eerst WebSocket-sessies sluiten, dan pas gateway stoppen.
+            let pttDirectClosing = false;
+            mainWindow.on("close", (event) => {
+              if (pttDirectClosing) return;
+              event.preventDefault();
+              pttDirectClosing = true;
+              const win = mainWindow;
+              Promise.resolve(win.webContents.executeJavaScript(
+                "window.dispatchEvent(new Event('pttdirect:logout')); true"
+              )).catch(() => undefined).finally(() => {
+                setTimeout(() => {
+                  if (!win.isDestroyed()) win.close();
+                }, 300);
+              });
+            });
 
-          package = json.loads(
-              pkg_file.read_text(encoding='utf-8')
-          )
+          ''' + anchor, 1)
+          main_path.write_text(main, encoding='utf-8')
 
-          package['version'] = '0.6.1'
+          pkg = json.loads(pkg_path.read_text(encoding='utf-8'))
+          pkg['version'] = '0.6.2'
+          pkg['description'] = 'PTT Direct voor Windows'
+          pkg['build']['productName'] = 'PTT Direct'
+          pkg['build']['win']['artifactName'] = 'PTT-Direct-Windows-${version}-${arch}.${ext}'
+          pkg['build']['nsis']['shortcutName'] = 'PTT Direct'
+          pkg_path.write_text(json.dumps(pkg, indent=2, ensure_ascii=False)+'\n',encoding='utf-8')
 
-          pkg_file.write_text(
-              json.dumps(
-                  package,
-                  indent=2,
-                  ensure_ascii=False
-              ) + '\n',
-              encoding='utf-8'
-          )
-
-          print(
-              'PTT Direct 0.6.1: naam, eenvoudige '
-              'TG-aanmelding en CH-filter toegepast'
-          )
+          print('PTT Direct 0.6.2: naam, TG-favorieten, naam bewaren, microfoonwissel en uitloggen')
           PY
 
       - name: TeamSpeak connector bouwen
@@ -671,32 +487,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p windows/runtime/web
           mkdir -p windows/runtime/gateway
           mkdir -p windows/runtime/connector
-
-          cp -R upstream/web/dist/. \
-            windows/runtime/web/
-
-          cp -R upstream/gateway/dist \
-            windows/runtime/gateway/dist
-
-          cp -R upstream/gateway/node_modules \
-            windows/runtime/gateway/node_modules
-
-          cp upstream/connector/target/release/ts-connector.exe \
-            windows/runtime/connector/ts-connector.exe
-
-          cp upstream/LICENSE \
-            windows/runtime/LICENSE-WebSpeak3.txt
-
-          cp android-source/LICENSE \
-            windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
-
-          test -s \
-            windows/runtime/connector/ts-connector.exe
-
+          cp -R upstream/web/dist/. windows/runtime/web/
+          cp -R upstream/gateway/dist windows/runtime/gateway/dist
+          cp -R upstream/gateway/node_modules windows/runtime/gateway/node_modules
+          cp upstream/connector/target/release/ts-connector.exe windows/runtime/connector/ts-connector.exe
+          cp upstream/LICENSE windows/runtime/LICENSE-WebSpeak3.txt
+          cp android-source/LICENSE windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
+          test -s windows/runtime/connector/ts-connector.exe
           node --check windows/main.cjs
 
       - name: Windows EXE en installer bouwen
@@ -710,7 +510,7 @@ jobs:
       - name: Windows EXE beschikbaar maken
         uses: actions/upload-artifact@v4
         with:
-          name: PTT-TS-NL-Windows-64bit
+          name: PTT-Direct-Windows-64bit
           path: windows/dist/*.exe
           if-no-files-found: error
           retention-days: 30
