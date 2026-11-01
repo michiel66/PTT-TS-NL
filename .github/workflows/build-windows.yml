@@ -1,5 +1,5 @@
 
-name: Bouw PTT-TS-NL Windows 0.5.0 Rogerpiep
+name: Bouw PTT-TS-NL Windows 0.5.1 Rogerpiep
 
 on:
   workflow_dispatch:
@@ -260,12 +260,10 @@ jobs:
           settings = r"""
                       {tsNlPanel === "settings" && <>
                         <strong>⚙ Instellingen</strong>
-
                         <button type="button" onClick={() => {
                           setOptionsDialogOpen(true);
                           setTsNlPanel(null);
                         }}>🎙 Audio en PTT-instellingen</button>
-
                         <button type="button" onClick={() => {
                           setTsnlBgError("");
                           setTsNlPanel("background");
@@ -274,10 +272,8 @@ jobs:
 
                       {tsNlPanel === "background" && <>
                         <strong>🖼 Eigen achtergrond</strong>
-
                         <p>Kies een foto van je computer. Je achtergrond blijft
                            lokaal bewaard bij het opnieuw starten.</p>
-
                         <input
                           className="tsnl-bg-picker"
                           ref={tsnlBgPicker}
@@ -287,48 +283,32 @@ jobs:
                           onChange={e => {
                             const file = e.currentTarget.files?.[0];
                             e.currentTarget.value = "";
-
                             if (!file) return;
-
                             if (!["image/png","image/jpeg","image/webp","image/gif"].includes(file.type)) {
                               setTsnlBgError("Gebruik JPG, PNG, WebP of GIF");
                               return;
                             }
-
                             if (file.size > 12 * 1024 * 1024) {
                               setTsnlBgError("De foto mag maximaal 12 MB zijn");
                               return;
                             }
-
                             void tsnlBgWrite(file).then(() => {
                               setTsnlBgFile(file);
                               setTsnlBgError("");
                             }).catch(() => setTsnlBgError("Opslaan mislukt"));
                           }}
                         />
-
-                        <button
-                          type="button"
-                          onClick={() => tsnlBgPicker.current?.click()}
-                        >
+                        <button type="button" onClick={() => tsnlBgPicker.current?.click()}>
                           📁 Eigen foto kiezen
                         </button>
-
                         <button type="button" onClick={() => {
                           void tsnlBgWrite(null).then(() => {
                             setTsnlBgFile(null);
                             setTsnlBgError("");
                           }).catch(() => setTsnlBgError("Herstellen mislukt"));
-                        }}>
-                          🔄 Standaard blauwe achtergrond
-                        </button>
-
+                        }}>🔄 Standaard blauwe achtergrond</button>
                         {tsnlBgError && <p role="alert">{tsnlBgError}</p>}
-
-                        <button
-                          type="button"
-                          onClick={() => setTsNlPanel("settings")}
-                        >
+                        <button type="button" onClick={() => setTsNlPanel("settings")}>
                           ← Terug naar instellingen
                         </button>
                       </>}
@@ -341,17 +321,10 @@ jobs:
           )
 
           path.write_text(app, encoding="utf-8")
-
           with Path("upstream/web/src/App.css").open("a", encoding="utf-8") as f:
               f.write("""
-          .ts-app.tsnl-android .tsnl-bg-picker {
-            display:none!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-list {
-            background:transparent!important;
-          }
-
+          .ts-app.tsnl-android .tsnl-bg-picker { display:none!important; }
+          .ts-app.tsnl-android .tsnl-list { background:transparent!important; }
           .ts-app.tsnl-android .tsnl-channelname,
           .ts-app.tsnl-android .tsnl-username,
           .ts-app.tsnl-android .tsnl-spacer {
@@ -362,11 +335,7 @@ jobs:
           pkg_path = Path("windows/package.json")
           package = json.loads(pkg_path.read_text(encoding="utf-8"))
           package["version"] = "0.4.4"
-
-          pkg_path.write_text(
-              json.dumps(package, indent=2, ensure_ascii=False) + "\n",
-              encoding="utf-8",
-          )
+          pkg_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
           print("PTT-TS-NL 0.4.4: eigen achtergrond toegevoegd")
           PY
 
@@ -382,7 +351,6 @@ jobs:
           voice_file = Path("upstream/web/src/voice.ts")
           app_file = Path("upstream/web/src/App.tsx")
           css_file = Path("upstream/web/src/App.css")
-
           voice = voice_file.read_text(encoding="utf-8")
           app = app_file.read_text(encoding="utf-8")
 
@@ -390,22 +358,18 @@ jobs:
               global voice
               count = voice.count(old)
               if count != 1:
-                  raise RuntimeError(
-                      f"Rogerpiep {label}: verwacht 1, gevonden {count}"
-                  )
+                  raise RuntimeError(f"Rogerpiep {label}: verwacht 1, gevonden {count}")
               voice = voice.replace(old, new, 1)
 
           def app_once(old, new, label):
               global app
               count = app.count(old)
               if count != 1:
-                  raise RuntimeError(
-                      f"Rogerpiep {label}: verwacht 1, gevonden {count}"
-                  )
+                  raise RuntimeError(f"Rogerpiep {label}: verwacht 1, gevonden {count}")
               app = app.replace(old, new, 1)
 
-          # De rogerpiep wordt via TeamSpeak verzonden.
-          # Het is dus niet alleen een lokaal geluid.
+          # De toon is een echte TeamSpeak-uitzending:
+          # PCM gaat via de bestaande MicCapture naar de connector.
 
           voice_once(
               "  private pushToTalkActive = false;",
@@ -432,6 +396,7 @@ jobs:
             }
 
             private makeRogerBeep(): Float32Array {
+              // Drie oplopende tonen via 48 kHz mono.
               const frequencies = [700, 950, 1200];
               const toneLength = Math.round(SAMPLE_RATE * 0.120);
               const gapLength = Math.round(SAMPLE_RATE * 0.000);
@@ -447,7 +412,9 @@ jobs:
               for (const frequency of frequencies) {
                 for (let n = 0; n < toneLength; n++) {
                   const fade = Math.min(
-                    1, n / fadeLength, (toneLength - n - 1) / fadeLength
+                    1,
+                    n / fadeLength,
+                    (toneLength - n - 1) / fadeLength
                   );
 
                   samples[offset + n] =
@@ -462,8 +429,6 @@ jobs:
             }
 
             setPushToTalk(active: boolean): void {
-              // Voorkom dubbele rogerpiep bij het loslaten.
-
               if (active) {
                 this.rogerBeepSamples = null;
                 this.rogerBeepCursor = 0;
@@ -472,6 +437,7 @@ jobs:
                 this.transmissionMode === "ptt" &&
                 this.rogerBeepEnabled
               ) {
+                // Slechts één piep per keer loslaten.
                 this.rogerBeepSamples = this.makeRogerBeep();
                 this.rogerBeepCursor = 0;
                 this.pending = [];
@@ -534,7 +500,7 @@ jobs:
               "PTT-stop maakt piep leeg",
           )
 
-          # Instelling per Windows-gebruiker, standaard uit.
+          # Instelling bewaren, standaard uit.
 
           app_once(
               '''const [tsNlPanel, setTsNlPanel] = useState<"menu" | "info" | "users" | "chat" | "settings" | "background" | null>(null);''',
@@ -564,27 +530,29 @@ jobs:
               "instelling ook bij nieuwe microfoon toepassen",
           )
 
+          # Hersteld in versie 0.5.1:
+          # Zoekt niet meer op een volledig ingesprongen codeblok.
+
           app_once(
-              '''{tsNlPanel === "settings" && <>
-                                  <strong>⚙ Instellingen</strong>''',
-              '''{tsNlPanel === "settings" && <>
-                                  <strong>⚙ Instellingen</strong>
+              '<strong>⚙ Instellingen</strong>',
+              '''<strong>⚙ Instellingen</strong>
 
-                                  <label className="tsnl-roger-row">
-                                    <input
-                                      type="checkbox"
-                                      checked={tsnlRogerEnabled}
-                                      onChange={event =>
-                                        setTsnlRogerEnabled(event.target.checked)
-                                      }
-                                    />
-                                    <span>3-tonige rogerpiep</span>
-                                  </label>
+                        <label className="tsnl-roger-row">
+                          <input
+                            type="checkbox"
+                            checked={tsnlRogerEnabled}
+                            onChange={event =>
+                              setTsnlRogerEnabled(event.target.checked)
+                            }
+                          />
+                          <span>3-tonige rogerpiep</span>
+                        </label>
 
-                                  <p className="tsnl-roger-description">
-                                    Na loslaten van PTT horen andere gebruikers
-                                    de eindtoon. Standaard uit.
-                                  </p>''',
+                        <p className="tsnl-roger-description">
+                          Na het loslaten van PTT horen andere
+                          TeamSpeak-gebruikers de rogerpiep.
+                          Standaard uit.
+                        </p>''',
               "schakelaar in Android-instellingen",
           )
 
@@ -593,7 +561,7 @@ jobs:
 
           with css_file.open("a", encoding="utf-8") as css:
               css.write('''
-          /* 3-tonige rogerpiep in het instellingenmenu */
+          /* 3-tonige rogerpiep in het instellingenmenu. */
 
           .ts-app.tsnl-android .tsnl-roger-row {
             display:flex;
@@ -621,11 +589,8 @@ jobs:
           ''')
 
           pkg_path = Path("windows/package.json")
-          package = json.loads(
-              pkg_path.read_text(encoding="utf-8")
-          )
-
-          package["version"] = "0.5.0"
+          package = json.loads(pkg_path.read_text(encoding="utf-8"))
+          package["version"] = "0.5.1"
 
           pkg_path.write_text(
               json.dumps(
@@ -636,9 +601,7 @@ jobs:
               encoding="utf-8",
           )
 
-          print(
-              "PTT-TS-NL 0.5.0: 3-tonige rogerpiep toegevoegd"
-          )
+          print("PTT-TS-NL 0.5.1: 3-tonige rogerpiep toegevoegd")
           PY
 
       - name: TeamSpeak connector bouwen
