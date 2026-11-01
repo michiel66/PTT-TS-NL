@@ -1,5 +1,5 @@
 
-name: Bouw PTT-TS-NL Windows 0.6.0 Multicolor interface
+name: Bouw PTT Direct Windows 0.6.1 - TG Voorburg Heerlen
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: PTT-TS-NL Windows 64-bit
+    name: PTT Direct Windows 64-bit
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -30,6 +30,13 @@ jobs:
           repository: michiel66/PTT-TS-NL
           ref: 0f0c7cd2416c2a8492dc8f457bc8c629134c4eb1
           path: known-good
+
+      - name: Bewezen versie 0.6.0 ophalen
+        uses: actions/checkout@v4
+        with:
+          repository: michiel66/PTT-TS-NL
+          ref: 77881f1f8f5e23fb9b4b968a7a02860a954bfceb
+          path: green-060
 
       - name: Groen gebouwde versie 0.5.1 ophalen
         uses: actions/checkout@v4
@@ -86,47 +93,63 @@ jobs:
           set -euo pipefail
           python pttbase/windows/patch_webspeak3.py
 
-      - name: Bewezen werkende TeamSpeak interface achtergrond en rogerpiep toepassen
+      - name: Werkende Multicolor 0.6.0 zonder wijzigingen toepassen
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
+          python - <<'PYCODE'
           from pathlib import Path
 
-          workflow = Path('green-051/.github/workflows/build-windows.yml')
-          source = workflow.read_text(encoding='utf-8')
+          source = Path(
+              'green-060/.github/workflows/build-windows.yml'
+          ).read_text(encoding='utf-8')
 
-          steps = [
-              'Android-weergave uit groene versie 0.3.0 toepassen zonder WSL',
-              'Eigen achtergrond toevoegen aan instellingen',
-              'Drie-tonige rogerpiep voor alle TeamSpeak gebruikers',
-          ]
-
-          for name in steps:
+          for name in [
+              'Bewezen werkende TeamSpeak interface achtergrond en rogerpiep toepassen',
+              'Multicolor 0.6.0 design uit voorbeeldfoto toepassen',
+          ]:
               marker = (
                   f'      - name: {name}\n'
                   '        shell: bash\n'
                   '        run: |\n'
               )
+
               if source.count(marker) != 1:
-                  raise RuntimeError(f'Bewezen bouwstap niet gevonden: {name}')
-              section = source.split(marker, 1)[1].split('\n      - name:', 1)[0]
+                  raise RuntimeError(
+                      f'Bronstap ontbreekt: {name}'
+                  )
+
+              block = source.split(marker, 1)[1].split(
+                  '\n      - name:', 1
+              )[0]
+
               lines = [
                   line[10:] if line.startswith('          ') else line
-                  for line in section.splitlines()
+                  for line in block.splitlines()
               ]
+
               start = lines.index("python - <<'PY'") + 1
               end = len(lines) - 1 - lines[::-1].index('PY')
-              if end <= start:
-                  raise RuntimeError(f'Ongeldige Python-stap: {name}')
-              script = '\n'.join(lines[start:end]) + '\n'
-              print(f'Bouwstap uitvoeren: {name}', flush=True)
-              exec(compile(script, name, 'exec'), {'__name__': '__main__'})
 
-          print('TeamSpeak, PTT, achtergrond en rogerpiep overgenomen')
-          PY
+              code = '\n'.join(lines[start:end]) + '\n'
 
-      - name: Multicolor 0.6.0 design uit voorbeeldfoto toepassen
+              print(
+                  f'Werkende stap uitvoeren: {name}',
+                  flush=True
+              )
+
+              exec(
+                  compile(code, name, 'exec'),
+                  {'__name__': '__main__'}
+              )
+
+          print(
+              'Multicolor design, PTT, rogerpiep '
+              'en achtergrond behouden'
+          )
+          PYCODE
+
+      - name: PTT Direct naam, talkgroepen en Voorburg CH-kanalen
         shell: bash
         run: |
           set -euo pipefail
@@ -135,860 +158,487 @@ jobs:
           import json
           import re
 
-          app_path = Path('upstream/web/src/App.tsx')
-          css_path = Path('upstream/web/src/App.css')
-          package_path = Path('windows/package.json')
-          app = app_path.read_text(encoding='utf-8')
+          app_file = Path('upstream/web/src/App.tsx')
+          css_file = Path('upstream/web/src/App.css')
+          pkg_file = Path('windows/package.json')
 
-          def one(old: str, new: str, label: str):
+          app = app_file.read_text(encoding='utf-8')
+
+          def once(old: str, new: str, label: str):
               global app
+
               count = app.count(old)
+
               if count != 1:
-                  raise RuntimeError(f'{label}: verwacht 1 locatie, gevonden {count}')
+                  raise RuntimeError(
+                      f'{label}: verwacht 1, gevonden {count}'
+                  )
+
               app = app.replace(old, new, 1)
 
-          # Moderne iconen en werkende navigatie.
-          new_nav = r'''
-                            <nav className="tsnl-top" aria-label="PTT Communicator navigatie">
-                              <button className="tsnl-menu-trigger" type="button"
-                                title="Menu en extra functies"
-                                aria-label="Menu openen"
-                                onClick={() => setTsNlPanel(v => v === "menu" ? null : "menu")}>
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <path d="M4 7h16M4 12h16M4 17h16" />
-                                </svg>
-                              </button>
+          # ===========================================
+          # 1. NAAM PTT DIRECT
+          # ===========================================
 
-                              <div className="tsnl-brand">
-                                <span className="tsnl-brand-mark" aria-hidden="true" />
-                                <div className="tsnl-brand-label">
-                                  <strong>PTT Communicator</strong>
-                                  <small>TeamSpeak · Push-to-Talk</small>
-                                </div>
-                              </div>
-                              <span className="tsnl-nav-divider" aria-hidden="true" />
+          # Bestaande multicolor ontwerp blijft gelijk.
 
-                              <button type="button" className="tsnl-nav-btn tsnl-server-btn"
-                                title="Server verbinden of servermenu openen"
-                                onClick={() => setTsNlPanel(v => v === "menu" ? null : "menu")}>
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <rect x="4" y="4" width="16" height="7" rx="2" />
-                                  <rect x="4" y="13" width="16" height="7" rx="2" />
-                                  <path d="M8 7.5h.01M8 16.5h.01" />
-                                </svg>
-                                <span>Server</span>
-                              </button>
+          if app.count('PTT Communicator') < 2:
+              raise RuntimeError(
+                  'Titel PTT Communicator ontbreekt'
+              )
 
-                              <button type="button" className="tsnl-nav-btn tsnl-channels-btn"
-                                title="TeamSpeak kanalen bekijken"
-                                onClick={() => setTsNlPanel(null)}>
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <circle cx="12" cy="12" r="2" />
-                                  <path d="M7.3 7.3a6.6 6.6 0 0 0 0 9.4M16.7 7.3a6.6 6.6 0 0 1 0 9.4M4.3 4.3a11 11 0 0 0 0 15.4M19.7 4.3a11 11 0 0 1 0 15.4" />
-                                </svg>
-                                <span>Channels</span>
-                              </button>
+          app = app.replace(
+              'PTT Communicator',
+              'PTT Direct'
+          )
 
-                              <button type="button" className="tsnl-nav-btn tsnl-users-btn"
-                                title="Online gebruikers"
-                                onClick={() => setTsNlPanel(v => v === "users" ? null : "users")}>
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <circle cx="9" cy="7" r="3" />
-                                  <circle cx="17.5" cy="8" r="2.3" />
-                                  <path d="M2.5 20v-2a6.5 6.5 0 0 1 13 0v2zM16 14.5a5 5 0 0 1 5.5 5.5" />
-                                </svg>
-                                <span>Users</span>
-                              </button>
+          # TeamSpeak tekst onder het logo weghalen.
 
-                              <button type="button" className="tsnl-nav-btn tsnl-settings-btn"
-                                title="Instellingen, achtergrond en rogerpiep"
-                                onClick={() => setTsNlPanel(v => v === "settings" ? null : "settings")}>
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                  <path d="M12 2.5l1.7 2.1 2.6-.2.7 2.5 2.5.9-.4 2.7 1.9 1.5-1.9 1.5.4 2.7-2.5.9-.7 2.5-2.6-.2L12 21.5l-1.7-2.1-2.6.2-.7-2.5-2.5-.9.4-2.7L3 12l1.9-1.5-.4-2.7 2.5-.9.7-2.5 2.6.2z" />
-                                  <circle cx="12" cy="12" r="3.1" />
-                                </svg>
-                                <span>Settings</span>
-                              </button>
-                            </nav>
+          once(
+              '<small>TeamSpeak · Push-to-Talk</small>',
+              '',
+              'Ondertitel verwijderen'
+          )
+
+          # ===========================================
+          # 2. TALKGROEPEN
+          # ===========================================
+
+          # Gebruiker hoeft alleen naam en talkgroep
+          # te kiezen.
+          #
+          # Voorburg: ptt.mijnts3.nl
+          # Heerlen:  heerlen.mijnts3.nl
+          #
+          # Serveradres niet zichtbaar in aanmelding.
+
+          state = r'''
+            const [
+              pttDirectGroup,
+              setPttDirectGroup
+            ] = useState<"voorburg" | "heerlen">(
+              () =>
+                localStorage.getItem("pttdirect:group")
+                  === "heerlen"
+                    ? "heerlen"
+                    : "voorburg"
+            );
+
+            const [
+              pttDirectName,
+              setPttDirectName
+            ] = useState("");
           '''
 
-          nav_matches = list(re.finditer(
-              r'<nav className="tsnl-top"[^>]*>.*?</nav>',
-              app,
-              flags=re.S
-          ))
-          if len(nav_matches) != 1:
-              raise RuntimeError(f'Navigatiebalk: {len(nav_matches)} overeenkomsten')
-          nav = nav_matches[0]
-          app = app[:nav.start()] + new_nav + app[nav.end():]
-
-          # Kanalenpaneel met echte TeamSpeak-informatie.
-          main_before = '<div className="tsnl-list">'
-          main_after = r'''                  <section className="tsnl-main-card" aria-label="TeamSpeak kanalen">
-                              <div className="tsnl-section-title">
-                                <span className="tsnl-equalizer" aria-hidden="true">▏▍▎▍▏</span>
-                                <span>Signal Processing</span>
-                                <span className="tsnl-equalizer" aria-hidden="true">▏▍▎▍▏</span>
-                              </div>
-                            <div className="tsnl-list">'''
-          one(main_before, main_after, 'Kanalenpaneel openen')
-          one(
-              '{tsNlPanel && (',
-              '</section>\n\n                  {tsNlPanel && (',
-              'Kanalenpaneel sluiten'
+          once(
+              'function AppInner() {',
+              'function AppInner() {' + state,
+              'Talkgroep en naam'
           )
 
-          # Alleen de oorspronkelijke werkende PTT-knop behouden.
-          footer = list(re.finditer(
-              r'<div className="tsnl-footer">.*?</div>',
-              app,
-              flags=re.S
-          ))
-          if len(footer) != 1:
-              raise RuntimeError(f'PTT onderbalk: {len(footer)} overeenkomsten')
-          old_footer = footer[0].group()
-          ptt_class = old_footer.find('className={`tsnl-ptt')
-          ptt_start = old_footer.rfind(
-              '<button', 0, ptt_class
-          ) if ptt_class >= 0 else -1
-          if ptt_start < 0:
-              raise RuntimeError('De werkende PTT-knop ontbreekt')
-          ptt_end = old_footer.find('</button>', ptt_start)
-          if ptt_end < 0:
-              raise RuntimeError('Het einde van de PTT-knop ontbreekt')
-          ptt = old_footer[ptt_start:ptt_end + len('</button>')]
-          if 'setPushToTalk(true)' not in ptt or 'setPushToTalk(false)' not in ptt:
-              raise RuntimeError('PTT-bediening is onvolledig')
+          # ===========================================
+          # 3. AANMELDEN BIJ OPSTARTEN
+          # ===========================================
 
-          ptt, ptt_replacements = re.subn(
-              r'<span>🎙</span>\s*<small>PTT</small>',
-              '''<svg className="tsnl-ptt-microphone" viewBox="0 0 24 24" aria-hidden="true">
-                                  <rect x="9" y="2" width="6" height="13" rx="3" />
-                                  <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5v4M8 21.5h8" />
-                                </svg>
-                                <span className="tsnl-ptt-text">PTT</span>''',
-              ptt,
-              count=1
+          once(
+              'const [connectDialogOpen, setConnectDialogOpen] = useState(false);',
+              'const [connectDialogOpen, setConnectDialogOpen] = useState(true);',
+              'Aanmeldvenster bij opstart'
           )
-          if ptt_replacements != 1:
-              raise RuntimeError('PTT tekst en pictogram werden niet gevonden')
 
-          new_footer = (
-              '<div className="tsnl-footer">\n' +
-              ptt +
-              '\n                  </div>'
+          # ===========================================
+          # 4. GEBRUIKERSNAAM
+          # ===========================================
+
+          # Geen automatische toevoeging
+          # van PTT Connect aan de naam.
+
+          start = app.find(
+              'function makePttConnectNickname('
           )
-          app = app[:footer[0].start()] + new_footer + app[footer[0].end():]
 
-          # Microfoon, luidspreker en chat onder het menu.
-          old_menu = r'\{tsNlPanel === "menu" && <>\s*<strong>PTT-TS-NL</strong>'
-          new_menu = r'''{tsNlPanel === "menu" && <>
-                                  <strong>PTT Communicator</strong>
-                                  <span className="tsnl-menu-caption">Server & bediening</span>
-
-                                  <button type="button" onClick={() => void handleToggleMic()}>
-                                    {micOn ? "🎙 Microfoon uitschakelen" : "🎙 Microfoon inschakelen"}
-                                  </button>
-
-                                  <button type="button" disabled={!connected}
-                                    onClick={handleToggleOutputMuted}>
-                                    {outputMuted ? "🔊 Luidspreker inschakelen" : "🔈 Luidspreker dempen"}
-                                  </button>
-
-                                  <button type="button" disabled={!connected}
-                                    onClick={() => setTsNlPanel("chat")}>
-                                    💬 TeamSpeak chat
-                                  </button>'''
-          app, count = re.subn(
-              old_menu,
-              lambda _: new_menu,
-              app,
-              count=1
+          end = app.find(
+              'function redPttDots(',
+              start
           )
-          if count != 1:
-              raise RuntimeError('Functies in menu: anker niet gevonden')
 
-          # Kanaalnamen visueel opschonen, servergegevens blijven gelijk.
-          helper = r'''function tsnlCleanChannelName(name: string): string {
-            const cleaned = name.replace(/^\s*[-<>→←]+\s*/, "").replace(/\s*[-<>→←]+\s*$/, "").trim();
-            return cleaned || name;
-          }
+          if start < 0 or end <= start:
+              raise RuntimeError(
+                  'Bestaande nickname functie ontbreekt'
+              )
 
+          app = (
+              app[:start] +
+              'function makePttConnectNickname(value: string): string {\n'
+              '  return value.trim().slice(0, 30);\n'
+              '}\n\n' +
+              app[end:]
+          )
+
+          # ===========================================
+          # 5. NIEUW EENVOUDIG AANMELDSCHERM
+          # ===========================================
+
+          # Oude uitgebreide inlogscherm vervangen.
+          # Hoofdinterface verandert niet.
+
+          login = r'''
+                {connectDialogOpen && (
+                  <div className="ts-dialog-backdrop">
+                    <form
+                      className="ts-dialog pttdirect-login"
+
+                      onSubmit={event => {
+                        event.preventDefault();
+
+                        const name =
+                          pttDirectName.trim();
+
+                        if (!name || connecting) {
+                          return;
+                        }
+
+                        const server =
+                          pttDirectGroup === "voorburg"
+                            ? "ptt.mijnts3.nl"
+                            : "heerlen.mijnts3.nl";
+
+                        localStorage.setItem(
+                          "pttdirect:group",
+                          pttDirectGroup
+                        );
+
+                        handleConnect({
+                          host: server,
+                          nickname: name,
+                          serverPassword: "",
+                          channelPassword: "",
+                          defaultChannel: "",
+                          privilegeKey: "",
+                          serverType: "teamspeak",
+                        });
+                      }}
+                    >
+                      <h2>PTT Direct</h2>
+
+                      <p>
+                        Voer je naam in en kies
+                        je talkgroep.
+                      </p>
+
+                      <label htmlFor="pttdirect-name">
+                        Gebruikersnaam
+                      </label>
+
+                      <input
+                        id="pttdirect-name"
+                        type="text"
+                        value={pttDirectName}
+                        autoFocus
+                        maxLength={30}
+                        required
+                        placeholder="Vul je naam in"
+
+                        onChange={event =>
+                          setPttDirectName(
+                            event.target.value
+                          )
+                        }
+                      />
+
+                      <label htmlFor="pttdirect-group">
+                        Talkgroep
+                      </label>
+
+                      <select
+                        id="pttdirect-group"
+                        value={pttDirectGroup}
+
+                        onChange={event =>
+                          setPttDirectGroup(
+                            event.target.value as
+                              "voorburg" | "heerlen"
+                          )
+                        }
+                      >
+                        <option value="voorburg">
+                          TG-103 Voorburg
+                        </option>
+
+                        <option value="heerlen">
+                          TG-108 Heerlen
+                        </option>
+                      </select>
+
+                      <div className="pttdirect-login-actions">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConnectDialogOpen(false)
+                          }
+                        >
+                          Annuleren
+                        </button>
+
+                        <button
+                          type="submit"
+                          disabled={
+                            !pttDirectName.trim() ||
+                            connecting
+                          }
+                        >
+                          {connecting
+                            ? "Verbinden..."
+                            : "Verbinden"}
+                        </button>
+                      </div>
+
+                      {connectError && (
+                        <p
+                          role="alert"
+                          className="pttdirect-error"
+                        >
+                          Verbinding mislukt.
+                          Probeer opnieuw.
+                        </p>
+                      )}
+                    </form>
+                  </div>
+                )}
           '''
-          one(
-              'function TsNlTree({',
-              helper + 'function TsNlTree({',
-              'Kanaalnaamopmaak'
+
+          dialog_pattern = (
+              r'\{connectDialogOpen && \('
+              r'\s*<ConnectDialog\b'
+              r'[\s\S]*?\/>\s*\)\}'
           )
-          tree_start = app.index('function TsNlTree({')
-          tree_end = app.index('function AppInner()', tree_start)
-          tree = app[tree_start:tree_end]
-          if tree.count('>{ch.name}</span>') != 1:
-              raise RuntimeError('Kanaalnaamtekst kon niet worden opgemaakt')
-          tree = tree.replace(
-              '>{ch.name}</span>',
-              '>{tsnlCleanChannelName(ch.name)}</span>',
+
+          found = list(
+              re.finditer(
+                  dialog_pattern,
+                  app
+              )
+          )
+
+          if len(found) != 1:
+              raise RuntimeError(
+                  'Aanmeldvenster: verwacht 1, '
+                  f'gevonden {len(found)}'
+              )
+
+          original_dialog = found[0].group()
+
+          # Oude dialoog bewaren voor bestaande
+          # TypeScript-referenties, niet renderen.
+
+          hidden_dialog = original_dialog.replace(
+              '{connectDialogOpen && (',
+              '{false && (',
               1
           )
 
-          # Duidelijke radio-iconen bij de kanalen.
-          icon_old = '<span className="tsnl-wave" aria-hidden="true">◉</span>'
-          icon_new = r'''<span className="tsnl-wave" aria-hidden="true">
-                                    <svg viewBox="0 0 24 24">
-                                      <circle cx="12" cy="12" r="2" />
-                                      <path d="M7.2 7.2a7 7 0 0 0 0 9.6m9.6-9.6a7 7 0 0 1 0 9.6M4.3 4.3a11 11 0 0 0 0 15.4m15.4-15.4a11 11 0 0 1 0 15.4" />
-                                    </svg>
-                                  </span>'''
-          if tree.count(icon_old) != 1:
-              raise RuntimeError('Radio-icoon ontbreekt in de kanalenlijst')
-          tree = tree.replace(icon_old, icon_new, 1)
-          app = app[:tree_start] + tree + app[tree_end:]
-          app_path.write_text(app, encoding='utf-8')
-
-          css = r'''
-          /* PTT Communicator 0.6.0 multicolor */
-
-          .ts-app.tsnl-android {
-            background:#080c20!important;
-            color:#f3f2fc!important;
-            font-family:"Segoe UI",Inter,Arial,sans-serif!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-shell {
-            max-width:none;
-            width:100%;
-            isolation:isolate;
-            overflow:hidden;
-            background:
-              radial-gradient(ellipse 40% 32% at -4% 8%,rgba(160,48,252,.30),transparent 85%),
-              radial-gradient(ellipse 38% 34% at -7% 86%,rgba(0,219,196,.25),transparent 87%),
-              radial-gradient(ellipse 38% 29% at 108% 80%,rgba(255,143,41,.28),transparent 82%),
-              radial-gradient(ellipse 55% 52% at 63% 50%,rgba(71,28,119,.19),transparent 90%),
-              linear-gradient(125deg,#080f28 0%,#10152f 42%,#1c1131 100%);
-            box-shadow:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-shell::before,
-          .ts-app.tsnl-android .tsnl-shell::after {
-            content:"";
-            position:absolute;
-            width:72%;
-            height:38%;
-            border-radius:50%;
-            border:2px solid rgba(165,61,240,.24);
-            pointer-events:none;
-            z-index:0;
-            filter:blur(1px);
-          }
-
-          .ts-app.tsnl-android .tsnl-shell::before {
-            top:-22%;
-            left:-28%;
-            transform:rotate(-21deg);
-          }
-
-          .ts-app.tsnl-android .tsnl-shell::after {
-            bottom:-23%;
-            right:-31%;
-            transform:rotate(-18deg);
-            border-color:rgba(255,143,39,.32);
-          }
-
-          .ts-app.tsnl-android .tsnl-top,
-          .ts-app.tsnl-android .tsnl-main-card,
-          .ts-app.tsnl-android .tsnl-footer {
-            position:relative;
-            z-index:1;
-          }
-
-          .ts-app.tsnl-android .tsnl-top {
-            height:100px;
-            flex:0 0 100px;
-            max-width:1150px;
-            width:calc(100% - 36px);
-            margin:0 auto;
-            padding:12px 8px;
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-            gap:8px;
-            background:transparent;
-            border:0;
-          }
-
-          .ts-app.tsnl-android .tsnl-top button {
-            background:transparent;
-            border:none;
-            color:#f5f5ff;
-            min-height:50px;
-            cursor:pointer;
-          }
-
-          .ts-app.tsnl-android .tsnl-menu-trigger {
-            flex:0 0 43px;
-            width:43px;
-            height:51px;
-            display:grid;
-            place-items:center;
-            border-radius:12px;
-          }
-
-          .ts-app.tsnl-android .tsnl-menu-trigger svg {
-            width:27px;
-            height:27px;
-            stroke:#edf4ff;
-            stroke-width:2;
-            fill:none;
-            stroke-linecap:round;
-          }
-
-          .ts-app.tsnl-android .tsnl-brand {
-            display:flex;
-            align-items:center;
-            gap:13px;
-            min-width:190px;
-            margin-right:auto;
-          }
-
-          .ts-app.tsnl-android .tsnl-brand-mark {
-            position:relative;
-            display:block;
-            width:38px;
-            height:43px;
-            border-top:5px solid #28ddd0;
-            border-right:5px solid #a64dfa;
-            border-radius:70% 70% 70% 25%;
-            transform:rotate(-18deg);
-          }
-
-          .ts-app.tsnl-android .tsnl-brand-mark::before {
-            content:"";
-            position:absolute;
-            inset:7px;
-            border-top:4px solid #24d4d1;
-            border-right:4px solid #8b5cf6;
-            border-radius:70% 70% 70% 25%;
-          }
-
-          .ts-app.tsnl-android .tsnl-brand-label {
-            display:flex;
-            flex-direction:column;
-            gap:4px;
-            white-space:nowrap;
-          }
-
-          .ts-app.tsnl-android .tsnl-brand-label strong {
-            font-size:21px;
-            font-weight:750;
-            letter-spacing:-.4px;
-            color:#f7f7ff;
-          }
-
-          .ts-app.tsnl-android .tsnl-brand-label small {
-            font-size:13px;
-            color:#cbd1e8;
-          }
-
-          .ts-app.tsnl-android .tsnl-nav-divider {
-            width:1px;
-            height:49px;
-            background:rgba(157,153,206,.45);
-            margin:0 14px;
-          }
-
-          .ts-app.tsnl-android .tsnl-nav-btn {
-            width:124px;
-            height:73px;
-            min-width:87px;
-            border-radius:16px;
-            display:flex;
-            flex-direction:column;
-            justify-content:center;
-            align-items:center;
-            gap:6px;
-            padding:7px 9px;
-            font-size:16px;
-            white-space:nowrap;
-            transition:background .16s,border .16s;
-          }
-
-          .ts-app.tsnl-android .tsnl-nav-btn svg,
-          .ts-app.tsnl-android .tsnl-radio {
-            width:29px;
-            height:29px;
-            fill:none;
-            stroke:currentColor;
-            stroke-width:1.9;
-            stroke-linecap:round;
-            stroke-linejoin:round;
-          }
-
-          .ts-app.tsnl-android .tsnl-top .tsnl-server-btn {
-            color:#ffca59;
-            background:linear-gradient(160deg,rgba(194,112,26,.35),rgba(72,43,70,.48));
-            border:1px solid #f1a742;
-            box-shadow:0 0 15px #fbaf4125,inset 0 0 12px #ffa43e18;
-          }
-
-          .ts-app.tsnl-android .tsnl-channels-btn svg {
-            color:#c786ff;
-          }
-
-          .ts-app.tsnl-android .tsnl-users-btn svg {
-            color:#69ed7b;
-            fill:#69ed7b18;
-          }
-
-          .ts-app.tsnl-android .tsnl-settings-btn svg {
-            color:#5cbafc;
-          }
-
-          .ts-app.tsnl-android .tsnl-nav-btn:hover {
-            background-color:rgba(255,255,255,.10);
-          }
-
-          .ts-app.tsnl-android .tsnl-main-card {
-            width:calc(100% - 70px);
-            max-width:1090px;
-            flex:1 1 auto;
-            min-height:0;
-            margin:0 auto 9px;
-            border-radius:24px;
-            border:1px solid rgba(157,105,224,.36);
-            background:linear-gradient(128deg,rgba(10,26,53,.92),rgba(20,21,54,.86) 60%,rgba(41,22,57,.82));
-            box-shadow:inset 0 1px 18px rgba(109,51,153,.09),0 10px 45px rgba(4,6,18,.19);
-            display:flex;
-            flex-direction:column;
-            overflow:hidden;
-          }
-
-          .ts-app.tsnl-android .tsnl-section-title {
-            flex:0 0 auto;
-            height:73px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            gap:18px;
-            color:#f6f5ff;
-            font-size:19px;
-            font-weight:480;
-          }
-
-          .ts-app.tsnl-android .tsnl-equalizer {
-            font-size:22px;
-            font-weight:900;
-            letter-spacing:1px;
-            color:#22ded1;
-            text-shadow:0 0 15px #00caba75;
-          }
-
-          .ts-app.tsnl-android .tsnl-list {
-            flex:1 1 auto;
-            height:auto;
-            padding:5px 23px 22px;
-            overflow:auto;
-            background:transparent!important;
-            scrollbar-color:#765d9c transparent;
-            scrollbar-width:thin;
-          }
-
-          .ts-app.tsnl-android .tsnl-spacer {
-            display:none!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-branch {
-            margin:0 0 8px;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel,
-          .ts-app.tsnl-android .tsnl-user {
-            font-family:"Segoe UI",Arial,sans-serif;
-            transition:background .12s,box-shadow .12s;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel {
-            min-height:51px;
-            border-radius:16px;
-            border:1px solid rgba(134,119,184,.24);
-            background:linear-gradient(110deg,rgba(90,70,142,.33),rgba(50,61,103,.33))!important;
-            color:#f7f7ff;
-            padding-top:9px;
-            padding-bottom:9px;
-            font-size:17px;
-            font-weight:500;
-            gap:17px;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel::before {
-            content:"";
-            flex:0 0 16px;
-            width:16px;
-            height:16px;
-            border-radius:50%;
-            border:2px solid #aeb2d2;
-            background:transparent;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel.tsnl-current-channel,
-          .ts-app.tsnl-android .tsnl-channel.tsnl-chosen {
-            border:1px solid #12e7db;
-            color:white;
-            background:linear-gradient(90deg,rgba(2,151,155,.55),rgba(6,90,112,.42))!important;
-            box-shadow:0 0 20px rgba(13,201,190,.13),inset 0 0 18px rgba(29,215,202,.09);
-            font-weight:700;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel.tsnl-current-channel::before,
-          .ts-app.tsnl-android .tsnl-channel.tsnl-chosen::before {
-            border-color:#76ff75;
-            background:#4edb59;
-            box-shadow:0 0 0 3px #2aff542a,0 0 12px #56f18d9c;
-          }
-
-          .ts-app.tsnl-android .tsnl-wave {
-            width:30px;
-            flex:0 0 30px;
-            color:#bf82ff;
-            display:grid;
-            place-items:center;
-          }
-
-          .ts-app.tsnl-android .tsnl-wave svg {
-            width:28px;
-            height:28px;
-            fill:none;
-            stroke:currentColor;
-            stroke-width:1.9;
-            stroke-linecap:round;
-          }
-
-          .ts-app.tsnl-android .tsnl-current-channel .tsnl-wave,
-          .ts-app.tsnl-android .tsnl-chosen .tsnl-wave {
-            color:#3ceeff;
-          }
-
-          .ts-app.tsnl-android .tsnl-count {
-            margin-left:auto;
-            color:#f7f9ff;
-            font-size:15px;
-          }
-
-          .ts-app.tsnl-android .tsnl-user {
-            min-height:60px;
-            border-radius:10px;
-            background:transparent;
-            color:#f3f2ff;
-            font-size:16px;
-            gap:15px;
-          }
-
-          .ts-app.tsnl-android .tsnl-user:hover {
-            background:rgba(138,110,194,.15);
-          }
-
-          .ts-app.tsnl-android .tsnl-avatar {
-            width:39px;
-            height:39px;
-            flex-basis:39px;
-            font-size:20px;
-            box-shadow:0 0 13px #050c2040;
-          }
-
-          .ts-app.tsnl-android .tsnl-user-actions {
-            color:#72e979;
-            opacity:.95;
-          }
-
-          .ts-app.tsnl-android .tsnl-speaking {
-            box-shadow:inset 3px 0 #68ed77;
-            background:rgba(15,139,90,.18)!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-talk {
-            color:#7efd92;
-          }
-
-          .ts-app.tsnl-android .tsnl-offline {
-            color:#dde1f6;
-          }
-
-          .ts-app.tsnl-android .tsnl-offline button {
-            background:linear-gradient(120deg,#e48f42,#ffb959);
-            color:#23192a;
-            font-weight:700;
-          }
-
-          .ts-app.tsnl-android .tsnl-footer {
-            height:132px;
-            flex:0 0 132px;
-            display:flex;
-            justify-content:center;
-            align-items:center;
-            margin:0 auto 17px;
-            padding:0;
-            background:transparent;
-            border:none;
-            border-radius:0;
-            box-shadow:none;
-            width:100%;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt {
-            width:min(405px,calc(100vw - 85px));
-            min-width:0;
-            max-width:405px;
-            height:108px;
-            display:flex;
-            flex-direction:row;
-            align-items:center;
-            justify-content:center;
-            gap:22px;
-            border-radius:999px;
-            border:3px solid #ffd766;
-            background:linear-gradient(180deg,#ff8067 0%,#fa5168 43%,#a61c57 100%);
-            box-shadow:inset 0 5px 13px #fff5,0 0 0 4px #ff9a5528,0 0 30px #ff5e5480,0 15px 30px #19092066;
-            color:white;
-            transition:background .18s,box-shadow .18s,transform .12s;
-            touch-action:none;
-            user-select:none;
-            -webkit-user-select:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt:hover:not(:disabled) {
-            filter:brightness(1.09);
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt-active {
-            background:linear-gradient(180deg,#61eeb1,#119b74)!important;
-            border-color:#acf9cb;
-            box-shadow:0 0 37px #37f7a890!important;
-            transform:scale(.986);
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt:disabled {
-            opacity:.48;
-            cursor:not-allowed;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt .tsnl-ptt-microphone {
-            width:49px;
-            height:49px;
-            fill:none;
-            stroke:white;
-            stroke-width:2;
-            stroke-linecap:round;
-            stroke-linejoin:round;
-            pointer-events:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt .tsnl-ptt-text {
-            font-size:42px;
-            line-height:1;
-            font-weight:800;
-            letter-spacing:1px;
-            pointer-events:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup {
-            top:92px;
-            right:max(22px,calc((100% - 1100px)/2));
-            width:min(370px,calc(100% - 36px));
-            max-width:none;
-            max-height:calc(100% - 185px);
-            z-index:100;
-            background:linear-gradient(135deg,#17223c,#251938);
-            border:1px solid rgba(185,123,239,.56);
-            border-radius:18px;
-            box-shadow:0 18px 45px #02030f9c;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup strong {
-            font-size:18px;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup button {
-            border-radius:10px;
-            background:rgba(109,83,160,.31);
-            border:1px solid rgba(168,150,224,.21);
-            color:#f4f0ff;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup button:hover {
-            background:rgba(161,115,222,.37);
-          }
-
-          .ts-app.tsnl-android .tsnl-menu-caption {
-            font-size:12px;
-            color:#afc4dc;
-          }
-
-          .ts-app.tsnl-android .tsnl-roger-row {
-            background:rgba(75,54,130,.26);
-          }
-
-          @media(max-width:880px) {
-            .ts-app.tsnl-android .tsnl-top {
-              width:calc(100% - 14px);
-              height:78px;
-              flex-basis:78px;
-              gap:2px;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand {
-              min-width:0;
-              gap:6px;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand-label strong {
-              font-size:15px;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand-label small {
-              font-size:10px;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand-mark {
-              width:28px;
-              height:32px;
-            }
-
-            .ts-app.tsnl-android .tsnl-nav-divider {
-              display:none;
-            }
-
-            .ts-app.tsnl-android .tsnl-nav-btn {
-              min-width:49px;
-              width:65px;
-              height:60px;
-              padding:4px;
-              gap:4px;
-              font-size:10px;
-            }
-
-            .ts-app.tsnl-android .tsnl-nav-btn svg {
-              width:22px;
-              height:22px;
-            }
-
-            .ts-app.tsnl-android .tsnl-main-card {
-              width:calc(100% - 16px);
-              border-radius:17px;
-            }
-
-            .ts-app.tsnl-android .tsnl-list {
-              padding:2px 10px 12px;
-            }
-
-            .ts-app.tsnl-android .tsnl-section-title {
-              height:60px;
-              font-size:16px;
-            }
-
-            .ts-app.tsnl-android .tsnl-channel {
-              font-size:14px;
-              min-height:48px;
-              gap:8px;
-            }
-
-            .ts-app.tsnl-android .tsnl-wave {
-              width:22px;
-              flex-basis:22px;
-            }
-
-            .ts-app.tsnl-android .tsnl-wave svg {
-              width:21px;
-              height:21px;
-            }
-
-            .ts-app.tsnl-android .tsnl-user {
-              font-size:14px;
-              gap:8px;
-              min-height:55px;
-            }
-
-            .ts-app.tsnl-android .tsnl-footer {
-              height:110px;
-              flex-basis:110px;
-              margin-bottom:5px;
-            }
-
-            .ts-app.tsnl-android .tsnl-ptt {
-              height:88px;
-            }
-
-            .ts-app.tsnl-android .tsnl-ptt .tsnl-ptt-text {
-              font-size:32px;
-            }
-
-            .ts-app.tsnl-android .tsnl-ptt .tsnl-ptt-microphone {
-              width:38px;
-              height:38px;
-            }
-          }
-
-          @media(max-width:520px) {
-            .ts-app.tsnl-android .tsnl-top {
-              flex-wrap:wrap;
-              justify-content:space-around;
-              height:auto;
-              flex-basis:100px;
-              padding:3px 4px;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand {
-              flex:1;
-              min-width:130px;
-            }
-
-            .ts-app.tsnl-android .tsnl-nav-btn {
-              height:43px;
-              min-width:56px;
-              flex:1;
-            }
-
-            .ts-app.tsnl-android .tsnl-nav-btn svg {
-              display:none;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand-label strong {
-              font-size:13px;
-            }
-
-            .ts-app.tsnl-android .tsnl-brand-label small {
-              font-size:9px;
-            }
-
-            .ts-app.tsnl-android .tsnl-channel {
-              font-size:13px;
-            }
-
-            .ts-app.tsnl-android .tsnl-section-title {
-              height:48px;
-              font-size:14px;
-            }
-
-            .ts-app.tsnl-android .tsnl-footer {
-              height:96px;
-              flex-basis:96px;
-            }
-
-            .ts-app.tsnl-android .tsnl-ptt {
-              height:78px;
-            }
-          }
-          '''
-
-          with css_path.open('a',encoding='utf-8') as fp:
-              fp.write('\n'+css+'\n')
-
-          package = json.loads(package_path.read_text(encoding='utf-8'))
-          package['version'] = '0.6.0'
-          package_path.write_text(
-              json.dumps(package,indent=2,ensure_ascii=False)+'\n',
+          app = (
+              app[:found[0].start()] +
+              login.strip('\n') +
+              '\n' +
+              hidden_dialog +
+              app[found[0].end():]
+          )
+
+          # ===========================================
+          # 6. VOORBURG ALLEEN CH-KANALEN
+          # ===========================================
+
+          # TG-103 Voorburg:
+          # alleen namen die beginnen met CH.
+          #
+          # TG-108 Heerlen:
+          # alle kanalen tonen.
+          #
+          # De TeamSpeak-server wordt niet aangepast.
+
+          app, count = re.subn(
+              r'(<TsNlTree\s+)channels=\{channels\}',
+
+              lambda m: m.group(1) + '''
+                channels={
+                  host.trim().toLowerCase() ===
+                    "ptt.mijnts3.nl"
+
+                    ? channels
+                        .filter(ch =>
+                          /^CH/i.test(ch.name.trim())
+                        )
+                        .map(ch => ({
+                          ...ch,
+                          parent: 0
+                        }))
+
+                    : channels
+                }''',
+
+              app,
+              count=1,
+          )
+
+          if count != 1:
+              raise RuntimeError(
+                  'Voorburg CH-kanaalfilter: '
+                  f'verwacht 1, gevonden {count}'
+              )
+
+          # ===========================================
+          # 7. TALKGR0EP NAAM TONEN
+          # ===========================================
+
+          # Geen serveradres in de serverinformatie.
+
+          once(
+              '{serverName || host || "Geen server"}',
+
+              '''{
+                host.trim().toLowerCase() ===
+                  "ptt.mijnts3.nl"
+
+                  ? "TG-103 Voorburg"
+                  : "TG-108 Heerlen"
+              }''',
+
+              'Geen adres in serverinformatie'
+          )
+
+          app_file.write_text(
+              app,
               encoding='utf-8'
           )
 
-          print('PTT-TS-NL 0.6.0: multicolor interface toegepast; PTT, TeamSpeak, rogerpiep en foto behouden')
+          # ===========================================
+          # 8. OPMAAK VAN ALLEEN HET AANMELDSCHERM
+          # ===========================================
+
+          # Bestaande multicolor interface blijft
+          # volledig ongewijzigd.
+
+          with css_file.open(
+              'a',
+              encoding='utf-8'
+          ) as css:
+
+              css.write(r'''
+          /* PTT Direct aanmelding */
+
+          .pttdirect-login {
+            width:min(420px,calc(100vw - 30px));
+            display:flex;
+            flex-direction:column;
+            gap:13px;
+            padding:28px;
+            border-radius:20px;
+            background:linear-gradient(
+              135deg,
+              #17213c,
+              #261934
+            );
+            color:#f5f1ff;
+            border:1px solid rgba(188,132,236,.65);
+            box-shadow:0 24px 75px rgba(0,0,0,.6);
+          }
+
+          .pttdirect-login h2 {
+            margin:0;
+            color:white;
+            font-size:25px;
+          }
+
+          .pttdirect-login p {
+            margin:0 0 5px;
+            color:#d2d8ec;
+          }
+
+          .pttdirect-login label {
+            font-size:14px;
+            font-weight:600;
+            color:#eff1ff;
+          }
+
+          .pttdirect-login input,
+          .pttdirect-login select {
+            padding:12px 13px;
+            min-height:46px;
+            width:100%;
+            box-sizing:border-box;
+            border-radius:10px;
+            background:#121a32;
+            color:#fff;
+            border:1px solid #647498;
+            font-size:16px;
+          }
+
+          .pttdirect-login input:focus,
+          .pttdirect-login select:focus {
+            outline:2px solid #22d6c8;
+            outline-offset:1px;
+          }
+
+          .pttdirect-login-actions {
+            display:flex;
+            justify-content:flex-end;
+            gap:10px;
+            margin-top:7px;
+          }
+
+          .pttdirect-login-actions button {
+            border:1px solid #ae8fe8;
+            border-radius:10px;
+            padding:10px 17px;
+            color:white;
+            background:#533c7e;
+            cursor:pointer;
+          }
+
+          .pttdirect-login-actions button[type="submit"] {
+            background:linear-gradient(
+              100deg,
+              #0b9c96,
+              #087b83
+            );
+            border-color:#30dacf;
+            font-weight:700;
+          }
+
+          .pttdirect-login-actions button:disabled {
+            opacity:.45;
+            cursor:default;
+          }
+
+          .pttdirect-error {
+            color:#ffc2bc!important;
+          }
+          ''')
+
+          # ===========================================
+          # 9. VERSIE
+          # ===========================================
+
+          package = json.loads(
+              pkg_file.read_text(encoding='utf-8')
+          )
+
+          package['version'] = '0.6.1'
+
+          pkg_file.write_text(
+              json.dumps(
+                  package,
+                  indent=2,
+                  ensure_ascii=False
+              ) + '\n',
+              encoding='utf-8'
+          )
+
+          print(
+              'PTT Direct 0.6.1: naam, eenvoudige '
+              'TG-aanmelding en CH-filter toegepast'
+          )
           PY
 
       - name: TeamSpeak connector bouwen
@@ -1021,16 +671,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p windows/runtime/web
           mkdir -p windows/runtime/gateway
           mkdir -p windows/runtime/connector
-          cp -R upstream/web/dist/. windows/runtime/web/
-          cp -R upstream/gateway/dist windows/runtime/gateway/dist
-          cp -R upstream/gateway/node_modules windows/runtime/gateway/node_modules
-          cp upstream/connector/target/release/ts-connector.exe windows/runtime/connector/ts-connector.exe
-          cp upstream/LICENSE windows/runtime/LICENSE-WebSpeak3.txt
-          cp android-source/LICENSE windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
-          test -s windows/runtime/connector/ts-connector.exe
+
+          cp -R upstream/web/dist/. \
+            windows/runtime/web/
+
+          cp -R upstream/gateway/dist \
+            windows/runtime/gateway/dist
+
+          cp -R upstream/gateway/node_modules \
+            windows/runtime/gateway/node_modules
+
+          cp upstream/connector/target/release/ts-connector.exe \
+            windows/runtime/connector/ts-connector.exe
+
+          cp upstream/LICENSE \
+            windows/runtime/LICENSE-WebSpeak3.txt
+
+          cp android-source/LICENSE \
+            windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
+
+          test -s \
+            windows/runtime/connector/ts-connector.exe
+
           node --check windows/main.cjs
 
       - name: Windows EXE en installer bouwen
