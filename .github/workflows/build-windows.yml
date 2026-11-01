@@ -1,5 +1,5 @@
 
-name: Bouw PTT-TS-NL Windows 0.4.4
+name: Bouw PTT-TS-NL Windows 0.5.0 Rogerpiep
 
 on:
   workflow_dispatch:
@@ -250,6 +250,7 @@ jobs:
               '<button onClick={() => setTsNlPanel("settings")}>⚙ Instellingen</button>',
               "Menuknop instellingen",
           )
+
           once_regex(
               r'<button\s+className="tsnl-minor"\s+title="Instellingen"\s+onClick=\{\(\) =>\s*setOptionsDialogOpen\(true\)\s*\}\s*>♧</button>',
               '<button className="tsnl-minor" title="Instellingen" onClick={() => setTsNlPanel(v => v === "settings" ? null : "settings")}>♧</button>',
@@ -259,10 +260,12 @@ jobs:
           settings = r"""
                       {tsNlPanel === "settings" && <>
                         <strong>⚙ Instellingen</strong>
+
                         <button type="button" onClick={() => {
                           setOptionsDialogOpen(true);
                           setTsNlPanel(null);
                         }}>🎙 Audio en PTT-instellingen</button>
+
                         <button type="button" onClick={() => {
                           setTsnlBgError("");
                           setTsNlPanel("background");
@@ -271,8 +274,10 @@ jobs:
 
                       {tsNlPanel === "background" && <>
                         <strong>🖼 Eigen achtergrond</strong>
+
                         <p>Kies een foto van je computer. Je achtergrond blijft
                            lokaal bewaard bij het opnieuw starten.</p>
+
                         <input
                           className="tsnl-bg-picker"
                           ref={tsnlBgPicker}
@@ -282,32 +287,48 @@ jobs:
                           onChange={e => {
                             const file = e.currentTarget.files?.[0];
                             e.currentTarget.value = "";
+
                             if (!file) return;
+
                             if (!["image/png","image/jpeg","image/webp","image/gif"].includes(file.type)) {
                               setTsnlBgError("Gebruik JPG, PNG, WebP of GIF");
                               return;
                             }
+
                             if (file.size > 12 * 1024 * 1024) {
                               setTsnlBgError("De foto mag maximaal 12 MB zijn");
                               return;
                             }
+
                             void tsnlBgWrite(file).then(() => {
                               setTsnlBgFile(file);
                               setTsnlBgError("");
                             }).catch(() => setTsnlBgError("Opslaan mislukt"));
                           }}
                         />
-                        <button type="button" onClick={() => tsnlBgPicker.current?.click()}>
+
+                        <button
+                          type="button"
+                          onClick={() => tsnlBgPicker.current?.click()}
+                        >
                           📁 Eigen foto kiezen
                         </button>
+
                         <button type="button" onClick={() => {
                           void tsnlBgWrite(null).then(() => {
                             setTsnlBgFile(null);
                             setTsnlBgError("");
                           }).catch(() => setTsnlBgError("Herstellen mislukt"));
-                        }}>🔄 Standaard blauwe achtergrond</button>
+                        }}>
+                          🔄 Standaard blauwe achtergrond
+                        </button>
+
                         {tsnlBgError && <p role="alert">{tsnlBgError}</p>}
-                        <button type="button" onClick={() => setTsNlPanel("settings")}>
+
+                        <button
+                          type="button"
+                          onClick={() => setTsNlPanel("settings")}
+                        >
                           ← Terug naar instellingen
                         </button>
                       </>}
@@ -320,10 +341,17 @@ jobs:
           )
 
           path.write_text(app, encoding="utf-8")
+
           with Path("upstream/web/src/App.css").open("a", encoding="utf-8") as f:
               f.write("""
-          .ts-app.tsnl-android .tsnl-bg-picker { display:none!important; }
-          .ts-app.tsnl-android .tsnl-list { background:transparent!important; }
+          .ts-app.tsnl-android .tsnl-bg-picker {
+            display:none!important;
+          }
+
+          .ts-app.tsnl-android .tsnl-list {
+            background:transparent!important;
+          }
+
           .ts-app.tsnl-android .tsnl-channelname,
           .ts-app.tsnl-android .tsnl-username,
           .ts-app.tsnl-android .tsnl-spacer {
@@ -334,8 +362,283 @@ jobs:
           pkg_path = Path("windows/package.json")
           package = json.loads(pkg_path.read_text(encoding="utf-8"))
           package["version"] = "0.4.4"
-          pkg_path.write_text(json.dumps(package, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+          pkg_path.write_text(
+              json.dumps(package, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
           print("PTT-TS-NL 0.4.4: eigen achtergrond toegevoegd")
+          PY
+
+      - name: Drie-tonige rogerpiep voor alle TeamSpeak gebruikers
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          voice_file = Path("upstream/web/src/voice.ts")
+          app_file = Path("upstream/web/src/App.tsx")
+          css_file = Path("upstream/web/src/App.css")
+
+          voice = voice_file.read_text(encoding="utf-8")
+          app = app_file.read_text(encoding="utf-8")
+
+          def voice_once(old, new, label):
+              global voice
+              count = voice.count(old)
+              if count != 1:
+                  raise RuntimeError(
+                      f"Rogerpiep {label}: verwacht 1, gevonden {count}"
+                  )
+              voice = voice.replace(old, new, 1)
+
+          def app_once(old, new, label):
+              global app
+              count = app.count(old)
+              if count != 1:
+                  raise RuntimeError(
+                      f"Rogerpiep {label}: verwacht 1, gevonden {count}"
+                  )
+              app = app.replace(old, new, 1)
+
+          # De rogerpiep wordt via TeamSpeak verzonden.
+          # Het is dus niet alleen een lokaal geluid.
+
+          voice_once(
+              "  private pushToTalkActive = false;",
+              '''  private pushToTalkActive = false;
+            private rogerBeepEnabled = false;
+            private rogerBeepSamples: Float32Array | null = null;
+            private rogerBeepCursor = 0;''',
+              "audiostatus",
+          )
+
+          voice_once(
+              '''  setPushToTalk(
+              active: boolean
+            ): void {
+              this.pushToTalkActive = active;
+            }''',
+              '''  setRogerBeep(enabled: boolean): void {
+              this.rogerBeepEnabled = enabled;
+
+              if (!enabled) {
+                this.rogerBeepSamples = null;
+                this.rogerBeepCursor = 0;
+              }
+            }
+
+            private makeRogerBeep(): Float32Array {
+              const frequencies = [700, 950, 1200];
+              const toneLength = Math.round(SAMPLE_RATE * 0.120);
+              const gapLength = Math.round(SAMPLE_RATE * 0.000);
+              const silenceLength = Math.round(SAMPLE_RATE * 0.055);
+
+              const samples = new Float32Array(
+                frequencies.length * (toneLength + gapLength) + silenceLength
+              );
+
+              const fadeLength = Math.round(SAMPLE_RATE * 0.005);
+              let offset = 0;
+
+              for (const frequency of frequencies) {
+                for (let n = 0; n < toneLength; n++) {
+                  const fade = Math.min(
+                    1, n / fadeLength, (toneLength - n - 1) / fadeLength
+                  );
+
+                  samples[offset + n] =
+                    Math.sin(2 * Math.PI * frequency * n / SAMPLE_RATE) *
+                    Math.max(0, fade) * 0.198;
+                }
+
+                offset += toneLength + gapLength;
+              }
+
+              return samples;
+            }
+
+            setPushToTalk(active: boolean): void {
+              // Voorkom dubbele rogerpiep bij het loslaten.
+
+              if (active) {
+                this.rogerBeepSamples = null;
+                this.rogerBeepCursor = 0;
+              } else if (
+                this.pushToTalkActive &&
+                this.transmissionMode === "ptt" &&
+                this.rogerBeepEnabled
+              ) {
+                this.rogerBeepSamples = this.makeRogerBeep();
+                this.rogerBeepCursor = 0;
+                this.pending = [];
+              }
+
+              this.pushToTalkActive = active;
+            }''',
+              "loslaten PTT",
+          )
+
+          voice_once(
+              '''      const shouldBeActive =
+                  this.extra !== null ||
+                  this.transmissionMode === "continuous" ||
+                  (
+                    this.transmissionMode === "ptt"
+                      ? this.pushToTalkActive
+                      : now < this.activeUntil
+                  );''',
+              '''      const shouldBeActive =
+                  this.extra !== null ||
+                  this.rogerBeepSamples !== null ||
+                  this.transmissionMode === "continuous" ||
+                  (
+                    this.transmissionMode === "ptt"
+                      ? this.pushToTalkActive
+                      : now < this.activeUntil
+                  );''',
+              "PTT-audio actief houden tijdens piep",
+          )
+
+          voice_once(
+              '      for (let i = 0; i < input.length; i++) this.pending.push(input[i]);',
+              '''      const roger = this.rogerBeepSamples;
+
+                for (let i = 0; i < input.length; i++) {
+                  if (roger) {
+                    this.pending.push(
+                      this.rogerBeepCursor < roger.length
+                        ? roger[this.rogerBeepCursor++]
+                        : 0
+                    );
+                  } else {
+                    this.pending.push(input[i]);
+                  }
+                }
+
+                if (roger && this.rogerBeepCursor >= roger.length) {
+                  this.rogerBeepSamples = null;
+                  this.rogerBeepCursor = 0;
+                }''',
+              "eindtoon in PCM-audiokaders",
+          )
+
+          voice_once(
+              '  stop(): void {',
+              '''  stop(): void {
+              this.rogerBeepSamples = null;
+              this.rogerBeepCursor = 0;''',
+              "PTT-stop maakt piep leeg",
+          )
+
+          # Instelling per Windows-gebruiker, standaard uit.
+
+          app_once(
+              '''const [tsNlPanel, setTsNlPanel] = useState<"menu" | "info" | "users" | "chat" | "settings" | "background" | null>(null);''',
+              '''const [tsNlPanel, setTsNlPanel] = useState<"menu" | "info" | "users" | "chat" | "settings" | "background" | null>(null);
+
+                      const [tsnlRogerEnabled, setTsnlRogerEnabled] = useState(
+                        () => localStorage.getItem("ptt-ts-nl:roger-beep") === "1"
+                      );
+
+                      useEffect(() => {
+                        localStorage.setItem(
+                          "ptt-ts-nl:roger-beep",
+                          tsnlRogerEnabled ? "1" : "0"
+                        );
+
+                        micCaptureRef.current?.setRogerBeep(tsnlRogerEnabled);
+                      }, [tsnlRogerEnabled]);''',
+              "aan/uit instelling",
+          )
+
+          app_once(
+              '''      micCaptureRef.current = mic;
+          ''',
+              '''      micCaptureRef.current = mic;
+                mic.setRogerBeep(tsnlRogerEnabled);
+          ''',
+              "instelling ook bij nieuwe microfoon toepassen",
+          )
+
+          app_once(
+              '''{tsNlPanel === "settings" && <>
+                                  <strong>⚙ Instellingen</strong>''',
+              '''{tsNlPanel === "settings" && <>
+                                  <strong>⚙ Instellingen</strong>
+
+                                  <label className="tsnl-roger-row">
+                                    <input
+                                      type="checkbox"
+                                      checked={tsnlRogerEnabled}
+                                      onChange={event =>
+                                        setTsnlRogerEnabled(event.target.checked)
+                                      }
+                                    />
+                                    <span>3-tonige rogerpiep</span>
+                                  </label>
+
+                                  <p className="tsnl-roger-description">
+                                    Na loslaten van PTT horen andere gebruikers
+                                    de eindtoon. Standaard uit.
+                                  </p>''',
+              "schakelaar in Android-instellingen",
+          )
+
+          voice_file.write_text(voice, encoding="utf-8")
+          app_file.write_text(app, encoding="utf-8")
+
+          with css_file.open("a", encoding="utf-8") as css:
+              css.write('''
+          /* 3-tonige rogerpiep in het instellingenmenu */
+
+          .ts-app.tsnl-android .tsnl-roger-row {
+            display:flex;
+            align-items:center;
+            gap:12px;
+            border:1px solid rgba(194,218,255,.35);
+            border-radius:12px;
+            padding:10px 12px;
+            font-size:15px;
+            cursor:pointer;
+          }
+
+          .ts-app.tsnl-android .tsnl-roger-row input {
+            width:20px;
+            height:20px;
+            flex:0 0 20px;
+            accent-color:#64d4a7;
+          }
+
+          .ts-app.tsnl-android .tsnl-roger-description {
+            line-height:1.45;
+            font-size:12px;
+            color:#c7d8f2;
+          }
+          ''')
+
+          pkg_path = Path("windows/package.json")
+          package = json.loads(
+              pkg_path.read_text(encoding="utf-8")
+          )
+
+          package["version"] = "0.5.0"
+
+          pkg_path.write_text(
+              json.dumps(
+                  package,
+                  indent=2,
+                  ensure_ascii=False
+              ) + "\n",
+              encoding="utf-8",
+          )
+
+          print(
+              "PTT-TS-NL 0.5.0: 3-tonige rogerpiep toegevoegd"
+          )
           PY
 
       - name: TeamSpeak connector bouwen
@@ -368,16 +671,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           mkdir -p windows/runtime/web
           mkdir -p windows/runtime/gateway
           mkdir -p windows/runtime/connector
-          cp -R upstream/web/dist/. windows/runtime/web/
-          cp -R upstream/gateway/dist windows/runtime/gateway/dist
-          cp -R upstream/gateway/node_modules windows/runtime/gateway/node_modules
-          cp upstream/connector/target/release/ts-connector.exe windows/runtime/connector/ts-connector.exe
-          cp upstream/LICENSE windows/runtime/LICENSE-WebSpeak3.txt
-          cp android-source/LICENSE windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
-          test -s windows/runtime/connector/ts-connector.exe
+
+          cp -R upstream/web/dist/. \
+            windows/runtime/web/
+
+          cp -R upstream/gateway/dist \
+            windows/runtime/gateway/dist
+
+          cp -R upstream/gateway/node_modules \
+            windows/runtime/gateway/node_modules
+
+          cp upstream/connector/target/release/ts-connector.exe \
+            windows/runtime/connector/ts-connector.exe
+
+          cp upstream/LICENSE \
+            windows/runtime/LICENSE-WebSpeak3.txt
+
+          cp android-source/LICENSE \
+            windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
+
+          test -s \
+            windows/runtime/connector/ts-connector.exe
+
           node --check windows/main.cjs
 
       - name: Windows EXE en installer bouwen
