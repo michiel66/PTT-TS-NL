@@ -25,20 +25,20 @@ jobs:
       - name: Checkout PTT-TS-NL
         uses: actions/checkout@v4
 
-      - name: Download bekende Windows TeamSpeak basis
+      - name: Werkende Windows TeamSpeak basis ophalen
         uses: actions/checkout@v4
         with:
           repository: michiel66/PTTConnect-PC
           ref: 8ed94f98dae6cfce47e90116fe58b2f4392a6919
           path: pttbase
 
-      - name: Haal eigen Nederlandse Android-bestanden op
+      - name: Nederlandse Android aanpassingen ophalen
         uses: actions/checkout@v4
         with:
           repository: michiel66/TS6-Droid-NL
           path: android-nl
 
-      - name: Haal originele Android-schermen op
+      - name: Android schermen en kleuren ophalen
         uses: actions/checkout@v4
         with:
           repository: YUAXI/TS6_Droid_CN
@@ -58,7 +58,7 @@ jobs:
       - name: Rust installeren
         uses: dtolnay/rust-toolchain@stable
 
-      - name: TeamSpeak broncode ophalen
+      - name: TeamSpeak broncode downloaden
         shell: bash
         run: |
           set -euo pipefail
@@ -67,339 +67,361 @@ jobs:
           git checkout "$WEBSPEAK3_COMMIT"
           git submodule update --init --recursive
 
-      - name: TeamSpeak en PTT functies toepassen
+      - name: Bestaande werkende TeamSpeak en PTT functies behouden
         shell: bash
         run: |
           set -euo pipefail
           python pttbase/windows/patch_webspeak3.py
 
-      - name: Android-kleuren en Nederlandse teksten overnemen
+      - name: Android startscherm en kanalenlijst voor Windows
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import re
-          import json
           import colorsys
+          import json
+          import re
+          import shutil
 
-          kotlin = Path(
+          android_theme = Path(
               'android-source/app/src/main/kotlin/'
               'dev/tsdroid/ui/theme/Theme.kt'
-          )
-          translation_script = Path(
+          ).read_text(encoding='utf-8')
+          nl_text = Path(
               'android-nl/scripts/maak_nederlands.py'
-          )
-          app_source = Path('upstream/web/src/App.tsx')
-          app_css = Path('upstream/web/src/App.css')
+          ).read_text(encoding='utf-8')
+          app_path = Path('upstream/web/src/App.tsx')
+          css_path = Path('upstream/web/src/App.css')
+          app = app_path.read_text(encoding='utf-8')
 
-          theme = kotlin.read_text(encoding='utf-8')
-          nl = translation_script.read_text(encoding='utf-8')
-
-          def color(pattern, description):
-              found = re.search(pattern, theme)
+          def android_color(regex, label):
+              found = re.search(regex, android_theme)
               if not found:
-                  raise RuntimeError(
-                      f'Android kleur niet gevonden: {description}'
-                  )
+                  raise RuntimeError('Android-kleur ontbreekt: ' + label)
               return '#' + found.group(1)[2:].upper()
 
-          background = color(
-              r'surface = if \(isDark\) Color\(0x(FF[0-9A-Fa-f]{6})\)',
-              'background'
+          bg = android_color(
+              r'surface = if \(isDark\) Color\(0x(FF[0-9a-fA-F]{6})\)',
+              'achtergrond'
           )
-          surface = color(
-              r'surfaceContainer = Color\(0x(FF[0-9A-Fa-f]{6})\)',
-              'surface'
+          surface = android_color(
+              r'surfaceContainer = Color\(0x(FF[0-9a-fA-F]{6})\)',
+              'kaart'
           )
-          surface_high = color(
-              r'surfaceContainerHigh = Color\(0x(FF[0-9A-Fa-f]{6})\)',
-              'surfaceHigh'
+          high = android_color(
+              r'surfaceContainerHigh = Color\(0x(FF[0-9a-fA-F]{6})\)',
+              'kaart actief'
           )
-          seed = color(
-              r'generateColorScheme\(Color\(0x(FF[0-9A-Fa-f]{6})\)',
-              'seedColor'
+          seed = android_color(
+              r'generateColorScheme\(Color\(0x(FF[0-9a-fA-F]{6})\)',
+              'hoofdkleur'
           )
-
-          rgb = tuple(
-              int(seed[index:index+2], 16) / 255
-              for index in (1, 3, 5)
-          )
-          h, l, sat = colorsys.rgb_to_hls(*rgb)
-          primary_rgb = colorsys.hls_to_rgb(
-              h, .80, min(sat * .8, 1.0)
-          )
+          rgb = tuple(int(seed[i:i+2], 16)/255 for i in (1, 3, 5))
+          hue, light, saturation = colorsys.rgb_to_hls(*rgb)
           primary = '#' + ''.join(
-              f'{round(channel*255):02X}'
-              for channel in primary_rgb
-          )
-
-          match = re.search(
-              r'TRANSLATIONS = r"""(.*?)"""',
-              nl,
-              re.S
-          )
-          if not match:
-              raise RuntimeError(
-                  'Nederlandse Android-vertalingen niet gevonden'
+              f'{round(c*255):02X}'
+              for c in colorsys.hls_to_rgb(
+                  hue, .80, min(saturation * .8, 1.0)
               )
-
-          translations = {}
-          for line in match.group(1).splitlines():
+          )
+          strings_match = re.search(
+              r'TRANSLATIONS = r"""(.*?)"""', nl_text, re.S
+          )
+          if not strings_match:
+              raise RuntimeError('Nederlandse Android-teksten ontbreken')
+          strings = {}
+          for line in strings_match.group(1).splitlines():
               if '|' in line:
                   key, value = line.split('|', 1)
-                  translations[key.strip()] = value.strip()
+                  strings[key.strip()] = value.strip()
+          for key in ('connect', 'settings', 'bookmarks', 'ptt'):
+              if key not in strings:
+                  raise RuntimeError('Android-vertaling ontbreekt: ' + key)
 
-          for key in (
-              'server', 'bookmarks', 'settings', 'ptt', 'connect'
-          ):
-              if key not in translations:
+          def replace_once(old, new, label):
+              global app
+              if app.count(old) != 1:
                   raise RuntimeError(
-                      f'Nederlandse tekst ontbreekt: {key}'
+                      f'{label}: verwacht 1 overeenkomst, kreeg {app.count(old)}'
                   )
+              app = app.replace(old, new, 1)
 
-          css = f'''
-          /* PTT-TS-NL Android Material 3 kleuren */
-          .ts-app.ts-theme-dark {{
-            --bg: {background};
-            --bg-toolbar-1: {surface};
-            --bg-toolbar-2: {surface_high};
-            --border-soft: #49454F;
-            --text: #E6E1E5;
-            --text-muted: #CAC4D0;
-            --input-bg: {surface};
-            --input-text: #E6E1E5;
-            --row-hover: {surface_high};
-            background: linear-gradient(
-              155deg,
-              {surface_high},
-              {background} 60%
-            ) !important;
-          }}
+          # Het vorige programma opende direct de verbindingsdialoog.
+          # We tonen nu eerst het startscherm. Verbinden opent dezelfde dialoog.
+          replace_once(
+              'const [connectDialogOpen, setConnectDialogOpen] = useState(true);',
+              'const [connectDialogOpen, setConnectDialogOpen] = useState(false);',
+              'Welkomstscherm'
+          )
 
-          .ts-app.ts-theme-dark.ts-ptt-color-purple {{
-            --ptt-accent: {primary};
-            --ptt-accent-soft: #6750A4;
-            --ptt-accent-dark: #4F378B;
-            --ptt-glow: rgba(208,188,255,0.28);
-          }}
+          # Material 3 paars als standaard voor NIEUWE installaties.
+          # Een eerder gekozen thema blijft in de instellingen opgeslagen.
+          replace_once(
+              '  return "blue";\n}\n\nfunction loadTransmissionMode()',
+              '  return "purple";\n}\n\nfunction loadTransmissionMode()',
+              'Standaard Android-kleur'
+          )
 
-          .ts-app.ts-theme-dark .ts-menubar,
-          .ts-app.ts-theme-dark .ts-toolbar {{
-            background: {surface} !important;
-            border-bottom-color: #49454F !important;
-          }}
+          replace_once(
+              '          <div className="ts-side-panel">\n',
+              '''          <div className="ts-side-panel">
+            {!connected && (
+              <section className="ptt-ts-welcome">
+                <div className="ptt-ts-welcome-symbol" aria-hidden="true">📡</div>
+                <div className="ptt-ts-welcome-eyebrow">TEAMSPEAK NEDERLAND</div>
+                <h1>PTT-TS-NL</h1>
+                <p className="ptt-ts-welcome-subtitle">
+                  Praat, luister en verbind. De vertrouwde Android-bediening,
+                  nu op jouw Windows-computer.
+                </p>
+                <div className="ptt-ts-welcome-actions">
+                  <button type="button" onClick={() => setConnectDialogOpen(true)}>
+                    🔗 Verbinden met TeamSpeak
+                  </button>
+                  <button type="button" onClick={() => setOptionsDialogOpen(true)}>
+                    ⚙️ Instellingen
+                  </button>
+                </div>
+                <div className="ptt-ts-welcome-features">
+                  <div><strong>🎙 PTT</strong><span>Ingedrukt praten</span></div>
+                  <div><strong>📁 Kanalen</strong><span>Gebruikers live zichtbaar</span></div>
+                  <div><strong>⭐ Favorieten</strong><span>Bewaar je servers</span></div>
+                </div>
+              </section>
+            )}
+              ''',
+              'Windows welkom rechts'
+          )
 
+          replace_once(
+              '          <div className="ts-tree-panel" style={{ width: treeWidth }} onKeyDown={handleTreeKeyDown}>\n',
+              '''          <div className="ts-tree-panel" style={{ width: treeWidth }} onKeyDown={handleTreeKeyDown}>
+            {connected && (
+              <div className="ptt-ts-tree-title">
+                <span>📁 Kanalen en gebruikers</span>
+                <small>{channels.length} kanalen</small>
+              </div>
+            )}
+              ''',
+              'Windows kanalenkop'
+          )
+
+          replace_once(
+              '<div className="ts-tree-empty">{t("tree.notConnected")}</div>',
+              '''<div className="ptt-ts-tree-offline">
+                <strong>⭐ Favorieten en kanalen</strong>
+                <p>Maak verbinding om de kanalen en gebruikers van jouw server te zien.</p>
+                <button type="button" onClick={() => setConnectDialogOpen(true)}>
+                  Server kiezen
+                </button>
+              </div>''',
+              'Windows kanalen bij offline'
+          )
+
+          # De bestaande actieve-gebruikersweergave blijft gekoppeld aan echte data.
+          app = app.replace('PTT CONNECT', 'PTT-TS-NL')
+          app = app.replace('PTT Connect', 'PTT-TS-NL')
+          app_path.write_text(app, encoding='utf-8')
+
+          # Alle nieuwe onderdelen zijn alleen interface. Geen TeamSpeak-,
+          # audio-, microfoon- of PTT-logica wordt aangepast.
+          new_css = r'''
+          /* PTT-TS-NL - Android geïnspireerde Windows indeling */
+          .ts-app.ts-theme-dark {
+            --bg: __BG__;
+            --bg-toolbar-1: __SURFACE__;
+            --bg-toolbar-2: __HIGH__;
+            --border-soft: #49454f;
+            --text: #e6e1e5;
+            --text-muted: #cac4d0;
+            --input-bg: __SURFACE__;
+            --input-text: #fff;
+            --row-hover: __HIGH__;
+            background: linear-gradient(145deg, __HIGH__, __BG__ 65%) !important;
+          }
+          .ts-app.ts-theme-dark.ts-ptt-color-purple {
+            --ptt-accent: __PRIMARY__;
+            --ptt-accent-soft: #6750a4;
+            --ptt-accent-dark: #4f378b;
+            --ptt-glow: rgba(208,188,255,.24);
+          }
+          .ts-app.ts-theme-dark .ts-toolbar,
+          .ts-app.ts-theme-dark .ts-menubar {
+            background: __SURFACE__ !important;
+            border-bottom: 1px solid #49454f !important;
+          }
           .ts-app.ts-theme-dark .ts-tree-panel,
           .ts-app.ts-theme-dark .ts-chat-panel,
-          .ts-app.ts-theme-dark .ts-server-row {{
-            background: {surface} !important;
-            border-radius: 14px !important;
-          }}
-
-          .ts-app.ts-theme-dark .ts-row:hover {{
-            background: {surface_high} !important;
-          }}
-
-          .ts-app.ts-theme-dark .ts-tree-search,
-          .ts-app.ts-theme-dark .ts-chat-input-row textarea {{
-            color: #E6E1E5 !important;
-            background: {background} !important;
-            border-radius: 12px !important;
-          }}
+          .ts-app.ts-theme-dark .ts-server-row {
+            background: __SURFACE__ !important;
+            border: 1px solid #49454f !important;
+            border-radius: 16px !important;
+          }
+          .ts-app .ts-tree-panel { min-width: 330px !important; }
+          .ptt-ts-tree-title {
+            display: flex; align-items: center; justify-content: space-between;
+            gap: 8px; padding: 16px 14px 12px;
+            color: #e6e1e5; font-weight: 750; font-size: 14px;
+            border-bottom: 1px solid #49454f;
+          }
+          .ptt-ts-tree-title small {
+            color: #cac4d0; font-size: 11px; font-weight: 500;
+            white-space: nowrap;
+          }
+          .ts-app .ts-tree-search {
+            min-height: 40px !important; border-radius: 12px !important;
+            background: __BG__ !important; color: #fff !important;
+          }
+          .ts-app .ts-server-row {
+            margin-top: 11px !important; padding: 10px !important;
+            font-weight: 750; color: #f5f0ff;
+          }
+          .ts-app .ts-channel-row, .ts-app .ts-client-row {
+            min-height: 35px !important; padding: 7px 9px !important;
+            border-radius: 9px !important;
+          }
+          .ts-app .ts-row-selected {
+            background: color-mix(in srgb, var(--ptt-accent) 22%, __SURFACE__) !important;
+            outline: 1px solid var(--ptt-accent) !important;
+          }
+          .ptt-ts-tree-offline {
+            display: flex; flex-direction: column; gap: 12px;
+            align-items: stretch; padding: 28px 18px;
+            color: #e6e1e5;
+          }
+          .ptt-ts-tree-offline strong { font-size: 16px; }
+          .ptt-ts-tree-offline p { color: #cac4d0; font-size: 13px; line-height: 1.6; }
+          .ptt-ts-tree-offline button, .ptt-ts-welcome-actions button {
+            border-radius: 13px; border: 1px solid var(--ptt-accent);
+            padding: 12px 18px; font-size: 14px; font-weight: 700;
+            color: __BG__; background: var(--ptt-accent); cursor: pointer;
+          }
+          .ptt-ts-tree-offline button:hover,
+          .ptt-ts-welcome-actions button:hover { filter: brightness(1.12); }
+          .ptt-ts-welcome {
+            flex: 1; min-height: 0; overflow-y: auto;
+            padding: clamp(18px,4vw,52px);
+            display: flex; flex-direction: column; align-items: flex-start;
+            justify-content: center; gap: 13px;
+            background: radial-gradient(circle at 85% 4%, #41335f, transparent 52%),
+                        linear-gradient(155deg, __HIGH__, __BG__);
+            border: 1px solid #49454f; border-radius: 20px;
+            color: #e6e1e5;
+          }
+          .ptt-ts-welcome-symbol {
+            font-size: 36px; border-radius: 19px;
+            padding: 15px; background: #353142;
+            border: 1px solid #67558d;
+          }
+          .ptt-ts-welcome-eyebrow {
+            font-size: 11px; font-weight: 800; letter-spacing: .19em;
+            color: #d0bcff;
+          }
+          .ptt-ts-welcome h1 {
+            font-size: clamp(29px,3.8vw,48px);
+            line-height: 1.1; margin: 0; color: #fff;
+          }
+          .ptt-ts-welcome-subtitle {
+            font-size: 15px; color: #cac4d0; line-height: 1.7;
+            max-width: 540px; margin: 0;
+          }
+          .ptt-ts-welcome-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+          .ptt-ts-welcome-actions button:nth-child(2) {
+            background: transparent; color: #e6e1e5; border-color: #7c7685;
+          }
+          .ptt-ts-welcome-features {
+            display: grid; grid-template-columns: repeat(3,minmax(0,1fr));
+            width: 100%; gap: 10px; margin-top: 14px;
+          }
+          .ptt-ts-welcome-features > div {
+            display: flex; flex-direction: column; gap: 7px;
+            border: 1px solid #49454f; border-radius: 14px;
+            background: #29262f; padding: 14px;
+          }
+          .ptt-ts-welcome-features strong { font-size: 13px; color: #e6e1e5; }
+          .ptt-ts-welcome-features span { font-size: 11px; color: #cac4d0; }
+          .ts-app.ts-theme-dark .ptt-dashboard-card {
+            background: linear-gradient(160deg, __HIGH__, __SURFACE__) !important;
+            border: 1px solid #49454f !important; border-radius: 16px !important;
+          }
+          .ts-app.ts-theme-dark .ptt-dashboard-title { color: var(--ptt-accent) !important; }
+          .ts-app.ts-theme-dark .ts-connect-dialog {
+            background: __SURFACE__ !important; border-radius: 19px !important;
+            border: 1px solid #67558d !important; color: #e6e1e5;
+          }
+          .ts-app.ts-theme-dark .ts-connect-dialog input,
+          .ts-app.ts-theme-dark .ts-connect-dialog select {
+            background: __BG__ !important; color: #fff !important;
+            border-radius: 11px !important; min-height: 38px;
+          }
+          @media (max-width: 1050px) {
+            .ts-app .ts-tree-panel { min-width: 270px !important; }
+            .ptt-ts-welcome-features { grid-template-columns: 1fr; }
+            .ptt-ts-welcome { justify-content: flex-start; }
+          }
           '''
+          for key, value in {
+              '__BG__': bg, '__SURFACE__': surface,
+              '__HIGH__': high, '__PRIMARY__': primary
+          }.items():
+              new_css = new_css.replace(key, value)
+          with css_path.open('a', encoding='utf-8') as output:
+              output.write('\n' + new_css + '\n')
 
-          with app_css.open('a', encoding='utf-8') as output:
-              output.write(css)
-
-          source = app_source.read_text(encoding='utf-8')
-          old = (
-              '  return "blue";\n}\n\n'
-              'function loadTransmissionMode()'
-          )
-          new = (
-              '  return "purple";\n}\n\n'
-              'function loadTransmissionMode()'
-          )
-          if source.count(old) != 1:
-              raise RuntimeError(
-                  'PTT Connect kleuropstartcode gewijzigd'
-              )
-          app_source.write_text(
-              source.replace(old, new, 1),
-              encoding='utf-8'
-          )
-
-          reference = Path('windows/android-reference')
-          reference.mkdir(parents=True, exist_ok=True)
-
-          (reference / 'material3-kleuren.json').write_text(
-              json.dumps({
-                  'source': 'TS6-Droid-NL Theme.kt',
-                  'seed': seed,
-                  'primary': primary,
-                  'background': background,
-                  'surface': surface,
-                  'surfaceHigh': surface_high
-              }, indent=2),
-              encoding='utf-8'
-          )
-
-          (reference / 'nederlandse-teksten.json').write_text(
-              json.dumps(
-                  translations,
-                  ensure_ascii=False,
-                  indent=2
-              ),
-              encoding='utf-8'
-          )
-
-          print('Android-kleuren en vertalingen verwerkt')
-          PY
-
-      - name: PTT-TS-NL launcher en EXE voorbereiden
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          import shutil
-          from pathlib import Path
-
+          # Naam, eigen profiel en versie. Het icoon blijft voorlopig gelijk.
           base = Path('pttbase/windows')
           out = Path('windows')
           out.mkdir(exist_ok=True)
-
-          main = (
-              base / 'main.cjs'
-          ).read_text(encoding='utf-8')
-
-          assert 'const PTT_PORT = 32137;' in main
-          assert '"persist:pttconnect"' in main
-
-          main = main.replace(
-              'const PTT_PORT = 32137;',
-              'const PTT_PORT = 32138;'
-          )
-          main = main.replace(
-              '"persist:pttconnect"',
-              '"persist:ptt-ts-nl"'
-          )
-          main = main.replace(
-              'PTT Connect',
-              'PTT-TS-NL'
-          )
-
-          (out / 'main.cjs').write_text(
-              main,
-              encoding='utf-8'
-          )
-
-          pkg = json.loads(
-              (base / 'package.json').read_text(
-                  encoding='utf-8'
-              )
-          )
-
+          launcher = (base / 'main.cjs').read_text(encoding='utf-8')
+          if 'const PTT_PORT = 32137;' not in launcher:
+              raise RuntimeError('Windows launcher gewijzigd')
+          launcher = launcher.replace(
+              'const PTT_PORT = 32137;', 'const PTT_PORT = 32138;'
+          ).replace(
+              '"persist:pttconnect"', '"persist:ptt-ts-nl"'
+          ).replace('PTT Connect', 'PTT-TS-NL')
+          (out / 'main.cjs').write_text(launcher, encoding='utf-8')
+          pkg = json.loads((base / 'package.json').read_text(encoding='utf-8'))
           pkg['name'] = 'ptt-ts-nl'
-          pkg['version'] = '0.1.0'
-          pkg['description'] = 'PTT-TS-NL TeamSpeak Windows'
-
+          pkg['version'] = '0.2.0'
+          pkg['description'] = 'PTT-TS-NL Windows met Android startscherm'
           pkg['build']['appId'] = 'nl.ptt.ts.windows'
           pkg['build']['productName'] = 'PTT-TS-NL'
-
-          pkg['build']['files'] = [
-              'main.cjs',
-              'package.json',
-              'PTT-TS-NL.ico'
-          ]
-
+          pkg['build']['files'] = ['main.cjs', 'package.json', 'PTT-TS-NL.ico']
           pkg['build']['win']['icon'] = 'PTT-TS-NL.ico'
-          pkg['build']['win']['artifactName'] = (
-              'PTT-TS-NL-${version}-${arch}.${ext}'
-          )
-
-          pkg['build']['nsis']['installerIcon'] = (
-              'PTT-TS-NL.ico'
-          )
-          pkg['build']['nsis']['uninstallerIcon'] = (
-              'PTT-TS-NL.ico'
-          )
-          pkg['build']['nsis']['shortcutName'] = (
-              'PTT-TS-NL'
-          )
-          pkg['build']['nsis']['artifactName'] = (
-              'PTT-TS-NL-Setup-${version}-${arch}.${ext}'
-          )
-
+          pkg['build']['win']['artifactName'] = 'PTT-TS-NL-${version}-${arch}.${ext}'
+          pkg['build']['nsis']['installerIcon'] = 'PTT-TS-NL.ico'
+          pkg['build']['nsis']['uninstallerIcon'] = 'PTT-TS-NL.ico'
+          pkg['build']['nsis']['shortcutName'] = 'PTT-TS-NL'
+          pkg['build']['nsis']['artifactName'] = 'PTT-TS-NL-Setup-${version}-${arch}.${ext}'
           pkg['build']['portable'] = {
-              'artifactName':
-              'PTT-TS-NL-Portable-${version}-${arch}.${ext}'
+              'artifactName': 'PTT-TS-NL-Portable-${version}-${arch}.${ext}'
           }
-
           (out / 'package.json').write_text(
-              json.dumps(
-                  pkg,
-                  indent=2,
-                  ensure_ascii=False
-              ) + '\n',
+              json.dumps(pkg, ensure_ascii=False, indent=2) + '\n',
               encoding='utf-8'
           )
-
-          shutil.copyfile(
-              base / 'PTTConnect.ico',
-              out / 'PTT-TS-NL.ico'
-          )
-
-          src = Path('upstream/web/src')
-
-          for file in src.rglob('*'):
-              if (
-                  file.is_file()
-                  and file.suffix in {
-                      '.tsx', '.ts', '.css', '.html'
-                  }
-              ):
-                  content = file.read_text(
-                      encoding='utf-8'
-                  )
-                  updated = content.replace(
-                      'PTT Connect', 'PTT-TS-NL'
-                  )
-                  updated = updated.replace(
-                      'WebSpeak3', 'PTT-TS-NL'
-                  )
-                  if content != updated:
-                      file.write_text(
-                          updated,
-                          encoding='utf-8'
-                      )
-
+          shutil.copyfile(base / 'PTTConnect.ico', out / 'PTT-TS-NL.ico')
           index = Path('upstream/web/index.html')
           if index.exists():
-              html = index.read_text(encoding='utf-8')
-              html = html.replace(
-                  'PTT Connect', 'PTT-TS-NL'
-              )
-              html = html.replace(
-                  'WebSpeak3', 'PTT-TS-NL'
-              )
               index.write_text(
-                  html,
+                  index.read_text(encoding='utf-8').replace(
+                      'WebSpeak3', 'PTT-TS-NL'
+                  ).replace('PTT Connect', 'PTT-TS-NL'),
                   encoding='utf-8'
               )
-
-          print('PTT-TS-NL Windows bestanden aangemaakt')
+          print('PTT-TS-NL 0.2.0: Android startscherm en kanalenlijst klaar')
           PY
 
-      - name: Native TeamSpeak connector bouwen
+      - name: TeamSpeak connector bouwen
         shell: bash
         run: |
           set -euo pipefail
           cd upstream/connector
           cargo build --release
 
-      - name: Lokale TeamSpeak gateway bouwen
+      - name: TeamSpeak gateway bouwen
         shell: bash
         run: |
           set -euo pipefail
@@ -408,7 +430,7 @@ jobs:
           npm run build
           npm prune --omit=dev
 
-      - name: Windows interface bouwen
+      - name: Interface en TypeScript controleren
         shell: bash
         env:
           VITE_DONATE_URL: ""
@@ -418,45 +440,23 @@ jobs:
           npm ci
           npm run build
 
-      - name: Windows runtime bundelen
+      - name: TeamSpeak onderdelen voor Windows bundelen
         shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p windows/runtime/web
           mkdir -p windows/runtime/gateway
           mkdir -p windows/runtime/connector
-
-          cp -R upstream/web/dist/. \
-            windows/runtime/web/
-
-          cp -R upstream/gateway/dist \
-            windows/runtime/gateway/dist
-
-          cp -R upstream/gateway/node_modules \
-            windows/runtime/gateway/node_modules
-
-          cp \
-            upstream/connector/target/release/ts-connector.exe \
-            windows/runtime/connector/ts-connector.exe
-
-          cp upstream/LICENSE \
-            windows/runtime/LICENSE-WebSpeak3.txt
-
-          cp android-source/LICENSE \
-            windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
-
-          mkdir -p windows/runtime/android-reference
-
-          cp windows/android-reference/*.json \
-            windows/runtime/android-reference/
-
-          test -s \
-            windows/runtime/connector/ts-connector.exe
-
+          cp -R upstream/web/dist/. windows/runtime/web/
+          cp -R upstream/gateway/dist windows/runtime/gateway/dist
+          cp -R upstream/gateway/node_modules windows/runtime/gateway/node_modules
+          cp upstream/connector/target/release/ts-connector.exe windows/runtime/connector/ts-connector.exe
+          cp upstream/LICENSE windows/runtime/LICENSE-WebSpeak3.txt
+          cp android-source/LICENSE windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
+          test -s windows/runtime/connector/ts-connector.exe
           node --check windows/main.cjs
 
-      - name: Windows installer en portable EXE bouwen
+      - name: Installer en portable Windows EXE bouwen
         shell: bash
         run: |
           set -euo pipefail
@@ -464,7 +464,7 @@ jobs:
           npm install --no-audit --no-fund
           npm run dist
 
-      - name: EXE bestanden publiceren
+      - name: Windows EXE downloaden via Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PTT-TS-NL-Windows-64bit
