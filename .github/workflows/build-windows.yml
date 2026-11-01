@@ -1,5 +1,5 @@
 
-name: Bouw PTT-TS-NL Windows 0.4.1 Eigen achtergrond
+name: Bouw PTT-TS-NL Windows 0.4.3 Eigen achtergrond
 
 on:
   workflow_dispatch:
@@ -22,8 +22,15 @@ jobs:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
-      - name: Checkout PTT-TS-NL
+      - name: Huidige repository ophalen
         uses: actions/checkout@v4
+
+      - name: Bewezen groene versie 0.3.0 ophalen
+        uses: actions/checkout@v4
+        with:
+          repository: michiel66/PTT-TS-NL
+          ref: 0f0c7cd2416c2a8492dc8f457bc8c629134c4eb1
+          path: known-good
 
       - name: Werkende Windows TeamSpeak basis ophalen
         uses: actions/checkout@v4
@@ -45,12 +52,12 @@ jobs:
           ref: 56d3b4d1991a4c565b1f75f419f4563e772f9614
           path: android-source
 
-      - name: Node.js 22 installeren
+      - name: Node.js installeren
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Python 3.12 installeren
+      - name: Python installeren
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -58,7 +65,7 @@ jobs:
       - name: Rust installeren
         uses: dtolnay/rust-toolchain@stable
 
-      - name: TeamSpeak broncode downloaden
+      - name: TeamSpeak broncode ophalen
         shell: bash
         run: |
           set -euo pipefail
@@ -67,1101 +74,104 @@ jobs:
           git checkout "$WEBSPEAK3_COMMIT"
           git submodule update --init --recursive
 
-      - name: Bestaande werkende TeamSpeak en PTT functies behouden
+      - name: Werkende TeamSpeak en PTT basis toepassen
         shell: bash
         run: |
           set -euo pipefail
           python pttbase/windows/patch_webspeak3.py
 
-      - name: Bouw alleen het TS6 Droid scherm met live kanalen en PTT
+      - name: Succesvolle Android-schermcode van versie 0.3.0 toepassen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+
+          src = Path(
+              'known-good/.github/workflows/build-windows.yml'
+          )
+
+          content = src.read_text(encoding='utf-8')
+
+          anchor = (
+              '      - name: Bouw alleen het TS6 Droid scherm met live kanalen en PTT\n'
+              '        shell: bash\n'
+              '        run: |\n'
+          )
+
+          if content.count(anchor) != 1:
+              raise RuntimeError(
+                  'De bewezen Android-schermstap ontbreekt'
+              )
+
+          block = content.split(anchor, 1)[1].split(
+              '\n      - name:', 1
+          )[0]
+
+          commands = '\n'.join(
+              line[10:] if line.startswith('          ') else line
+              for line in block.splitlines()
+          ) + '\n'
+
+          script = Path('apply-known-good.sh')
+          script.write_text(commands, encoding='utf-8')
+
+          print(
+              'Voer de originele, eerder groene versie 0.3.0 uit'
+          )
+
+          subprocess.run(
+              ['bash', str(script)],
+              check=True
+          )
+          PY
+
+      - name: Eigen achtergrond toevoegen met robuuste koppeling
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
           import json
-          import shutil
-
-          app_file = Path('upstream/web/src/App.tsx')
-          css_file = Path('upstream/web/src/App.css')
-          app = app_file.read_text(encoding='utf-8')
-
-          def change(needle: str, replacement: str, label: str) -> None:
-              global app
-              amount = app.count(needle)
-              if amount != 1:
-                  raise RuntimeError(
-                      f'{label}: verwacht 1 locatie, gevonden {amount}'
-                  )
-              app = app.replace(needle, replacement, 1)
-
-          # Android ontwerpbron
-          # Bestaande Windows-TeamSpeak-connector behouden
-          android_screen = Path(
-              'android-source/app/src/main/kotlin/'
-              'dev/tsdroid/ui/screen/ServerScreen.kt'
-          )
-
-          if not android_screen.is_file():
-              raise RuntimeError('Android ServerScreen.kt ontbreekt')
-
-          change(
-              '  const [connectDialogOpen, setConnectDialogOpen] = useState(true);',
-              '''  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
-            const [tsNlPanel, setTsNlPanel] = useState<"menu" | "info" | "users" | "chat" | null>(null);''',
-              'Nieuwe TS6 starttoestand'
-          )
-
-          component = r'''
-          function TsNlTree({
-            channels, clients, talkers, selected, ownClientId,
-            onSelect, onJoin, onPrivateChat,
-          }: {
-            channels: ChannelInfo[];
-            clients: ClientInfo[];
-            talkers: Set<number>;
-            selected: SelectedItem | null;
-            ownClientId: number | null;
-            onSelect: (item: SelectedItem) => void;
-            onJoin: (channelId: number) => void;
-            onPrivateChat: (id: number, name: string) => void;
-          }) {
-            const [closed, setClosed] = useState<Set<number>>(new Set());
-
-            const colors = [
-              "#f94376", "#44aaf1", "#28a598",
-              "#5eb878", "#a84cb4", "#ff754b"
-            ];
-
-            const renderBranch = (
-              parent: number,
-              level: number
-            ): ReactNode => {
-              if (level > 15) return null;
-
-              return channels
-                .filter(c => c.parent === parent)
-                .sort((a, b) => a.order - b.order)
-                .map(ch => {
-                  const spacer = spacerDisplayName(
-                    ch.name,
-                    parent === 0
-                  );
-
-                  const members = clients.filter(
-                    c => c.channel === ch.id
-                  );
-
-                  const hasSub = channels.some(
-                    c => c.parent === ch.id
-                  );
-
-                  const collapsed = closed.has(ch.id);
-
-                  if (spacer.isSpacer) return (
-                    <div key={ch.id} className="tsnl-spacer">
-                      {spacer.isLine
-                        ? <span className="tsnl-separator" />
-                        : spacer.label}
-                    </div>
-                  );
-
-                  return (
-                    <section
-                      className="tsnl-branch"
-                      key={ch.id}
-                    >
-                      <button
-                        className={`tsnl-channel${
-                          selected?.type === "channel" &&
-                          selected.id === ch.id
-                            ? " tsnl-chosen"
-                            : ""
-                        }`}
-                        type="button"
-                        title="Klik om dit kanaal te openen"
-                        style={{
-                          paddingLeft: `${14 + level * 16}px`
-                        }}
-                        onClick={() => {
-                          onSelect({
-                            type: "channel",
-                            id: ch.id
-                          });
-                          onJoin(ch.id);
-                        }}
-                      >
-                        <span
-                          className="tsnl-wave"
-                          aria-hidden="true"
-                        >◉</span>
-
-                        <span className="tsnl-channelname">
-                          {ch.name}
-                        </span>
-
-                        {ch.hasPassword && <span>🔒</span>}
-
-                        {members.length > 0 &&
-                          <span className="tsnl-count">
-                            ({members.length})
-                          </span>}
-
-                        {hasSub &&
-                          <span
-                            className="tsnl-fold"
-                            onClick={e => {
-                              e.preventDefault();
-                              e.stopPropagation();
-
-                              setClosed(current => {
-                                const next = new Set(current);
-                                next.has(ch.id)
-                                  ? next.delete(ch.id)
-                                  : next.add(ch.id);
-                                return next;
-                              });
-                            }}
-                          >
-                            {collapsed ? "▸" : "▾"}
-                          </span>}
-                      </button>
-
-                      {!collapsed && members.map(c => (
-                        <button
-                          type="button"
-                          key={c.id}
-                          className={`tsnl-user${
-                            talkers.has(c.id)
-                              ? " tsnl-speaking"
-                              : ""
-                          }${
-                            selected?.type === "client" &&
-                            selected.id === c.id
-                              ? " tsnl-chosen"
-                              : ""
-                          }`}
-                          style={{
-                            paddingLeft: `${48 + level * 16}px`
-                          }}
-                          title={
-                            c.id === ownClientId
-                              ? c.name
-                              : `Dubbelklik voor privéchat met ${c.name}`
-                          }
-                          onClick={() => onSelect({
-                            type: "client",
-                            id: c.id
-                          })}
-                          onDoubleClick={() => {
-                            if (c.id !== ownClientId) {
-                              onPrivateChat(c.id, c.name);
-                            }
-                          }}
-                        >
-                          <span
-                            className="tsnl-avatar"
-                            style={{
-                              backgroundColor:
-                                colors[
-                                  Math.abs(c.id) % colors.length
-                                ]
-                            }}
-                          >
-                            {c.name.charAt(0).toUpperCase() || "·"}
-                          </span>
-
-                          <span className="tsnl-username">
-                            {c.name}
-                          </span>
-
-                          {talkers.has(c.id) &&
-                            <span className="tsnl-talk">
-                              SPREEKT
-                            </span>}
-
-                          {c.inputMuted &&
-                            <span
-                              className="tsnl-status"
-                              title="Microfoon gedempt"
-                            >🎙̸</span>}
-
-                          <span
-                            className="tsnl-user-actions"
-                            aria-hidden="true"
-                          >♙</span>
-
-                          <span
-                            className="tsnl-user-actions"
-                            aria-hidden="true"
-                          >
-                            {c.outputMuted ? "🔇" : "◁"}
-                          </span>
-                        </button>
-                      ))}
-
-                      {!collapsed &&
-                        renderBranch(ch.id, level + 1)}
-                    </section>
-                  );
-                });
-            };
-
-            return (
-              <div className="tsnl-tree">
-                {renderBranch(0, 0)}
-              </div>
-            );
-          }
-
-          '''
-
-          change(
-              'function AppInner() {',
-              component + 'function AppInner() {',
-              'Android kanaalcomponent'
-          )
-
-          change(
-              'ts-ptt-color-${pttColorTheme}',
-              'ts-ptt-color-${pttColorTheme} tsnl-android',
-              'Android schermklasse'
-          )
-
-          screen = r'''
-                <div className="tsnl-shell">
-                  <nav className="tsnl-top" aria-label="PTT-TS-NL bediening">
-                    <button title="Start"
-                      onClick={() => {
-                        setTsNlPanel(null);
-                        setSelected({type:"server"});
-                      }}>⌂</button>
-
-                    <button title="Menu"
-                      onClick={() =>
-                        setTsNlPanel(v =>
-                          v === "menu" ? null : "menu"
-                        )
-                      }>☰</button>
-
-                    <button title="Server verbinden"
-                      onClick={() => setConnectDialogOpen(true)}
-                    >🌍</button>
-
-                    <span
-                      className="tsnl-server-title"
-                      title={serverName || host}
-                    >
-                      {serverName || host || "PTT-TS-NL"}
-                    </span>
-
-                    <button title="Gebruikers"
-                      onClick={() =>
-                        setTsNlPanel(v =>
-                          v === "users" ? null : "users"
-                        )
-                      }>♙</button>
-
-                    <button title="Serverinformatie"
-                      onClick={() =>
-                        setTsNlPanel(v =>
-                          v === "info" ? null : "info"
-                        )
-                      }>ⓘ</button>
-
-                    <button title="Favorieten"
-                      onClick={() =>
-                        setFavoritesDialogMode({kind:"manage"})
-                      }>▤</button>
-
-                    <button title="Verbinding verbreken"
-                      disabled={!connected}
-                      onClick={() => handleDisconnect()}
-                    >⇥</button>
-                  </nav>
-
-                  <div className="tsnl-list">
-                    {connected ? (
-                      <TsNlTree
-                        channels={channels}
-                        clients={treeClients}
-                        talkers={displayTalkers}
-                        selected={selected}
-                        ownClientId={ownClient?.id ?? ownClientId}
-                        onSelect={handleSelectItem}
-                        onJoin={handleSwitchChannel}
-                        onPrivateChat={(id, name) => {
-                          handleOpenPrivateChat(id, name);
-                          setTsNlPanel("chat");
-                        }}
-                      />
-                    ) : (
-                      <div className="tsnl-offline">
-                        <div>📡</div>
-                        <strong>PTT-TS-NL</strong>
-                        <span>
-                          Niet verbonden met TeamSpeak
-                        </span>
-                        <button
-                          onClick={() =>
-                            setConnectDialogOpen(true)
-                          }
-                        >Verbinden</button>
-                      </div>
-                    )}
-                  </div>
-
-                  {tsNlPanel && (
-                    <div
-                      className="tsnl-popup"
-                      role="dialog"
-                      aria-label="Extra bediening"
-                    >
-                      <button
-                        className="tsnl-popup-close"
-                        onClick={() => setTsNlPanel(null)}
-                        title="Sluiten"
-                      >×</button>
-
-                      {tsNlPanel === "menu" && <>
-                        <strong>PTT-TS-NL</strong>
-
-                        <button onClick={() => {
-                          setConnectDialogOpen(true);
-                          setTsNlPanel(null);
-                        }}>🌍 Verbinden</button>
-
-                        <button onClick={() => {
-                          setFavoritesDialogMode({kind:"manage"});
-                          setTsNlPanel(null);
-                        }}>⭐ Favorieten</button>
-
-                        <button onClick={() => {
-                          setOptionsDialogOpen(true);
-                          setTsNlPanel(null);
-                        }}>⚙ Instellingen</button>
-
-                        <button
-                          disabled={!connected}
-                          onClick={() => {
-                            handleDisconnect();
-                            setTsNlPanel(null);
-                          }}
-                        >⇥ Verbinding verbreken</button>
-                      </>}
-
-                      {tsNlPanel === "info" && <>
-                        <strong>Serverinformatie</strong>
-                        <span>
-                          {serverName || host || "Geen server"}
-                        </span>
-                        <span>
-                          {channels.length} kanalen ·
-                          {" "}{treeClients.length} gebruikers
-                        </span>
-                      </>}
-
-                      {tsNlPanel === "users" && <>
-                        <strong>
-                          Gebruikers ({treeClients.length})
-                        </strong>
-                        {treeClients.map(c =>
-                          <span key={c.id}>{c.name}</span>
-                        )}
-                      </>}
-
-                      {tsNlPanel === "chat" && <>
-                        <strong>Chat</strong>
-
-                        <div className="tsnl-chat-messages">
-                          {(
-                            activeTab === "channel"
-                              ? chat
-                              : activeTab === "server"
-                                ? serverChat
-                                : pmThreads[activeTab]?.messages ?? []
-                          ).slice(-30).map((entry, i) =>
-                            <p key={i}>
-                              {"from" in entry
-                                ? entry.from
-                                : ""}:
-                              {" "}{entry.message}
-                            </p>
-                          )}
-                        </div>
-
-                        <form onSubmit={e => {
-                          e.preventDefault();
-                          handleSendChat();
-                        }}>
-                          <input
-                            value={chatInput}
-                            onChange={e =>
-                              setChatInput(e.target.value)
-                            }
-                            placeholder="Bericht typen..."
-                          />
-                          <button
-                            type="submit"
-                            disabled={!connected}
-                          >Verzend</button>
-                        </form>
-                      </>}
-                    </div>
-                  )}
-
-                  <div className="tsnl-footer">
-                    <button
-                      className="tsnl-minor tsnl-online"
-                      title={connected
-                        ? "Verbonden"
-                        : "Verbinden"}
-                      onClick={() =>
-                        connected
-                          ? setTsNlPanel("info")
-                          : setConnectDialogOpen(true)
-                      }
-                    >◯</button>
-
-                    <button
-                      className="tsnl-minor tsnl-green"
-                      title="Chat"
-                      onClick={() =>
-                        setTsNlPanel(v =>
-                          v === "chat" ? null : "chat"
-                        )
-                      }
-                    >☏</button>
-
-                    <button
-                      className="tsnl-minor"
-                      title="Instellingen"
-                      onClick={() =>
-                        setOptionsDialogOpen(true)
-                      }
-                    >♧</button>
-
-                    <button
-                      type="button"
-                      className={`tsnl-ptt${
-                        selfActive
-                          ? " tsnl-ptt-active"
-                          : ""
-                      }`}
-                      disabled={!connected || !micOn || inputMuted}
-                      title="Ingedrukt houden om te praten"
-
-                      onPointerDown={e => {
-                        if (!connected || !micOn || inputMuted)
-                          return;
-
-                        e.preventDefault();
-
-                        e.currentTarget.setPointerCapture(
-                          e.pointerId
-                        );
-
-                        micCaptureRef.current?.setPushToTalk(true);
-                      }}
-
-                      onPointerUp={() =>
-                        micCaptureRef.current?.setPushToTalk(false)
-                      }
-
-                      onPointerCancel={() =>
-                        micCaptureRef.current?.setPushToTalk(false)
-                      }
-
-                      onLostPointerCapture={() =>
-                        micCaptureRef.current?.setPushToTalk(false)
-                      }
-                    >
-                      <span>🎙</span>
-                      <small>PTT</small>
-                    </button>
-
-                    <button
-                      className={`tsnl-minor${
-                        inputMuted ? " tsnl-muted" : ""
-                      }`}
-                      title="Microfoon aan/uit"
-                      onClick={() =>
-                        void handleToggleMic()
-                      }
-                    >
-                      {inputMuted ? "🎙̸" : "🎙"}
-                    </button>
-
-                    <button
-                      className="tsnl-minor"
-                      title="Luidspreker aan/uit"
-                      onClick={handleToggleOutputMuted}
-                      disabled={!connected}
-                    >
-                      {outputMuted ? "🔇" : "◖))"}
-                    </button>
-                  </div>
-                </div>
-          '''
-
-          change(
-              '      <main className="ts-body">',
-              screen + '      <main className="ts-body">',
-              'Vervang hoofdscherm'
-          )
-
-          app_file.write_text(app, encoding='utf-8')
-
-          css = r'''
-          /* Alleen het TS6 Droid scherm */
-          .ts-app.tsnl-android {
-            height:100vh!important;
-            min-height:0!important;
-            overflow:hidden!important;
-            display:flex!important;
-            flex-direction:column!important;
-            background:#244f8a!important;
-            color:#e8eaf5!important;
-            font-family:Roboto,"Segoe UI",sans-serif!important;
-          }
-
-          .ts-app.tsnl-android > .ts-menubar,
-          .ts-app.tsnl-android > .ts-toolbar,
-          .ts-app.tsnl-android > .ts-body,
-          .ts-app.tsnl-android > .ts-log,
-          .ts-app.tsnl-android > .ts-demo-banner,
-          .ts-app.tsnl-android > .ts-session-tabs,
-          .ts-app.tsnl-android > .ts-gts-chrome {
-            display:none!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-shell {
-            width:100%;
-            max-width:1020px;
-            height:100%;
-            min-height:0;
-            margin:0 auto;
-            display:flex;
-            flex-direction:column;
-            position:relative;
-            background:linear-gradient(
-              180deg,#25508b 0%,#22518f 70%,#1c4582 100%
-            );
-            box-shadow:0 0 40px #112d5940;
-          }
-
-          .ts-app.tsnl-android .tsnl-top {
-            flex:0 0 auto;
-            height:75px;
-            display:flex;
-            align-items:center;
-            justify-content:space-around;
-            gap:3px;
-            padding:9px 14px;
-            background:rgba(34,78,139,.84);
-            color:#dce6fa;
-          }
-
-          .ts-app.tsnl-android .tsnl-top button {
-            background:transparent;
-            border:0;
-            color:#c7d6f2;
-            font-size:29px;
-            min-width:40px;
-            min-height:44px;
-            cursor:pointer;
-            padding:2px 4px;
-            border-radius:12px;
-          }
-
-          .ts-app.tsnl-android .tsnl-top button:hover {
-            background:#ffffff22;
-          }
-
-          .ts-app.tsnl-android .tsnl-top button:disabled {
-            opacity:.35;
-            cursor:default;
-          }
-
-          .ts-app.tsnl-android .tsnl-server-title {
-            max-width:180px;
-            min-width:40px;
-            overflow:hidden;
-            white-space:nowrap;
-            text-overflow:ellipsis;
-            font-size:22px;
-            font-weight:500;
-            text-align:center;
-          }
-
-          .ts-app.tsnl-android .tsnl-list {
-            flex:1 1 auto;
-            min-height:0;
-            overflow:auto;
-            padding:0 10px 16px;
-            overscroll-behavior:contain;
-          }
-
-          .ts-app.tsnl-android .tsnl-spacer {
-            color:#c8d7f1;
-            text-align:center;
-            font-size:17px;
-            padding:16px 6px 11px;
-            letter-spacing:.02em;
-          }
-
-          .ts-app.tsnl-android .tsnl-separator {
-            height:1px;
-            width:100%;
-            display:block;
-            background:#8f7e783e;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel,
-          .ts-app.tsnl-android .tsnl-user {
-            appearance:none;
-            width:100%;
-            font-family:inherit;
-            display:flex;
-            align-items:center;
-            gap:11px;
-            color:#e7e8f3;
-            background:transparent;
-            border:0;
-            text-align:left;
-            cursor:pointer;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel {
-            font-size:20px;
-            min-height:62px;
-            padding:12px 12px;
-            border-top:1px solid #f0a86b21;
-          }
-
-          .ts-app.tsnl-android .tsnl-user {
-            font-size:18px;
-            min-height:65px;
-            padding:8px 12px;
-          }
-
-          .ts-app.tsnl-android .tsnl-channel:hover,
-          .ts-app.tsnl-android .tsnl-user:hover,
-          .ts-app.tsnl-android .tsnl-chosen {
-            background:#ffffff12;
-          }
-
-          .ts-app.tsnl-android .tsnl-channelname,
-          .ts-app.tsnl-android .tsnl-username {
-            flex:1;
-            overflow:hidden;
-            text-overflow:ellipsis;
-            white-space:nowrap;
-          }
-
-          .ts-app.tsnl-android .tsnl-wave {
-            font-size:27px;
-            color:#b7d6f7;
-            width:35px;
-            flex:0 0 35px;
-          }
-
-          .ts-app.tsnl-android .tsnl-count {
-            font-size:14px;
-            color:#d7e3f8;
-          }
-
-          .ts-app.tsnl-android .tsnl-fold {
-            font-size:20px;
-            min-width:25px;
-          }
-
-          .ts-app.tsnl-android .tsnl-avatar {
-            width:48px;
-            height:48px;
-            flex:0 0 48px;
-            display:grid;
-            place-items:center;
-            border-radius:100%;
-            font-size:24px;
-            font-weight:700;
-            color:#fff;
-          }
-
-          .ts-app.tsnl-android .tsnl-status {
-            color:#f37d83;
-            font-size:20px;
-          }
-
-          .ts-app.tsnl-android .tsnl-user-actions {
-            color:#b1c5e8;
-            font-size:20px;
-            opacity:.55;
-          }
-
-          .ts-app.tsnl-android .tsnl-speaking {
-            background:#31cb8f28!important;
-            box-shadow:inset 4px 0 #6beeac;
-          }
-
-          .ts-app.tsnl-android .tsnl-talk {
-            color:#96f9b8;
-            font-size:11px;
-            font-weight:800;
-          }
-
-          .ts-app.tsnl-android .tsnl-offline {
-            height:100%;
-            display:flex;
-            flex-direction:column;
-            gap:22px;
-            align-items:center;
-            justify-content:center;
-            font-size:18px;
-          }
-
-          .ts-app.tsnl-android .tsnl-offline div {
-            font-size:56px;
-          }
-
-          .ts-app.tsnl-android .tsnl-offline strong {
-            font-size:28px;
-          }
-
-          .ts-app.tsnl-android .tsnl-offline button {
-            background:#b7d1f1;
-            color:#16396f;
-            font-size:17px;
-            border:0;
-            border-radius:20px;
-            padding:12px 32px;
-            cursor:pointer;
-          }
-
-          .ts-app.tsnl-android .tsnl-footer {
-            flex:0 0 auto;
-            height:160px;
-            margin:6px 22px 19px;
-            padding:12px 22px;
-            background:linear-gradient(
-              180deg,#ffffff5a,#c4def143
-            );
-            border:1.5px solid #d5e9ff77;
-            border-radius:44px;
-            box-shadow:inset 0 1px 14px #ffffff24;
-            display:flex;
-            align-items:center;
-            justify-content:space-around;
-            gap:7px;
-          }
-
-          .ts-app.tsnl-android .tsnl-minor {
-            appearance:none;
-            min-width:48px;
-            min-height:58px;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            border:0;
-            background:transparent;
-            color:#c4d8f4;
-            font-size:29px;
-            cursor:pointer;
-            border-radius:16px;
-          }
-
-          .ts-app.tsnl-android .tsnl-green,
-          .ts-app.tsnl-android .tsnl-online {
-            color:#4bc76c;
-          }
-
-          .ts-app.tsnl-android .tsnl-muted {
-            color:#ff999e;
-          }
-
-          .ts-app.tsnl-android .tsnl-minor:disabled {
-            opacity:.38;
-            cursor:default;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt {
-            width:112px;
-            height:112px;
-            min-width:90px;
-            display:flex;
-            flex-direction:column;
-            justify-content:center;
-            align-items:center;
-            gap:1px;
-            background:#ffffff0b;
-            border:1.5px solid #e6eff9ad;
-            border-radius:100%;
-            color:#fff;
-            cursor:pointer;
-            touch-action:none;
-            user-select:none;
-            -webkit-user-select:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt span {
-            font-size:43px;
-            line-height:1.1;
-            pointer-events:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt small {
-            font-size:16px;
-            font-weight:700;
-            pointer-events:none;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt:disabled {
-            opacity:.43;
-            cursor:default;
-          }
-
-          .ts-app.tsnl-android .tsnl-ptt-active {
-            background:#60d9878a;
-            box-shadow:0 0 27px #77ebaa88;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup {
-            position:absolute;
-            top:79px;
-            right:16px;
-            z-index:110;
-            background:#214775;
-            border:1px solid #b5ceff88;
-            border-radius:17px;
-            box-shadow:0 14px 40px #081729ae;
-            max-width:min(95%,390px);
-            max-height:60%;
-            overflow:auto;
-            padding:20px;
-            display:flex;
-            flex-direction:column;
-            gap:10px;
-            color:#fff;
-            font-size:14px;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup button {
-            background:#3770aa;
-            color:#fff;
-            border:0;
-            border-radius:10px;
-            min-height:39px;
-            padding:9px 13px;
-            cursor:pointer;
-            text-align:left;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup .tsnl-popup-close {
-            align-self:flex-end;
-            font-size:24px;
-            width:40px;
-            text-align:center;
-          }
-
-          .ts-app.tsnl-android .tsnl-chat-messages {
-            max-height:250px;
-            overflow:auto;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup form {
-            display:flex;
-            gap:5px;
-          }
-
-          .ts-app.tsnl-android .tsnl-popup input {
-            background:#102f5b;
-            color:#fff;
-            border:1px solid #719fdb;
-            border-radius:9px;
-            min-width:0;
-            flex:1;
-            padding:10px;
-          }
-
-          @media(max-width:730px) {
-            .ts-app.tsnl-android .tsnl-top {
-              height:65px;
-              padding:5px 4px;
-            }
-
-            .ts-app.tsnl-android .tsnl-top button {
-              min-width:31px;
-              font-size:23px;
-            }
-
-            .ts-app.tsnl-android .tsnl-server-title {
-              font-size:16px;
-            }
-
-            .ts-app.tsnl-android .tsnl-channel {
-              font-size:16px;
-              min-height:53px;
-            }
-
-            .ts-app.tsnl-android .tsnl-user {
-              font-size:15px;
-              min-height:55px;
-            }
-
-            .ts-app.tsnl-android .tsnl-avatar {
-              width:41px;
-              height:41px;
-              flex-basis:41px;
-              font-size:20px;
-            }
-
-            .ts-app.tsnl-android .tsnl-footer {
-              margin:5px 10px 10px;
-              height:122px;
-              padding:8px 6px;
-              border-radius:30px;
-            }
-
-            .ts-app.tsnl-android .tsnl-minor {
-              min-width:33px;
-              font-size:23px;
-            }
-
-            .ts-app.tsnl-android .tsnl-ptt {
-              width:87px;
-              height:87px;
-              min-width:83px;
-            }
-
-            .ts-app.tsnl-android .tsnl-ptt span {
-              font-size:34px;
-            }
-          }
-          '''
-
-          with css_file.open('a', encoding='utf-8') as f:
-              f.write('\n' + css + '\n')
-
-          base = Path('pttbase/windows')
-          out = Path('windows')
-          out.mkdir(exist_ok=True)
-
-          main = (base / 'main.cjs').read_text(
-              encoding='utf-8'
-          )
-
-          assert 'const PTT_PORT = 32137;' in main
-          assert '"persist:pttconnect"' in main
-
-          main = main.replace(
-              'const PTT_PORT = 32137;',
-              'const PTT_PORT = 32138;'
-          )
-
-          main = main.replace(
-              '"persist:pttconnect"',
-              '"persist:ptt-ts-nl"'
-          )
-
-          main = main.replace(
-              'PTT Connect',
-              'PTT-TS-NL'
-          )
-
-          (out / 'main.cjs').write_text(
-              main,
-              encoding='utf-8'
-          )
-
-          pkg = json.loads(
-              (base / 'package.json').read_text(
-                  encoding='utf-8'
-              )
-          )
-
-          pkg['name'] = 'ptt-ts-nl'
-          pkg['version'] = '0.4.1'
-          pkg['description'] = (
-              'PTT-TS-NL volledig TS6 Droid kanaalscherm Windows'
-          )
-
-          pkg['build']['appId'] = 'nl.ptt.ts.windows'
-          pkg['build']['productName'] = 'PTT-TS-NL'
-
-          pkg['build']['files'] = [
-              'main.cjs',
-              'package.json',
-              'PTT-TS-NL.ico'
-          ]
-
-          pkg['build']['win']['icon'] = 'PTT-TS-NL.ico'
-          pkg['build']['nsis']['installerIcon'] = 'PTT-TS-NL.ico'
-          pkg['build']['nsis']['uninstallerIcon'] = 'PTT-TS-NL.ico'
-          pkg['build']['nsis']['shortcutName'] = 'PTT-TS-NL'
-
-          pkg['build']['nsis']['artifactName'] = (
-              'PTT-TS-NL-Setup-${version}-${arch}.${ext}'
-          )
-
-          pkg['build']['portable'] = {
-              'artifactName':
-              'PTT-TS-NL-Portable-${version}-${arch}.${ext}'
-          }
-
-          (out / 'package.json').write_text(
-              json.dumps(
-                  pkg,
-                  indent=2,
-                  ensure_ascii=False
-              ) + '\n',
-              encoding='utf-8'
-          )
-
-          shutil.copyfile(
-              base / 'PTTConnect.ico',
-              out / 'PTT-TS-NL.ico'
-          )
-
-          index = Path('upstream/web/index.html')
-
-          if index.is_file():
-              index.write_text(
-                  index.read_text(encoding='utf-8')
-                  .replace('WebSpeak3', 'PTT-TS-NL')
-                  .replace('PTT Connect', 'PTT-TS-NL'),
-                  encoding='utf-8'
-              )
-
-          print('PTT-TS-NL 0.4.1 Android-weergave toegevoegd')
-          PY
-
-      - name: Eigen achtergrond toevoegen aan instellingen
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
+          import re
 
           app_path = Path('upstream/web/src/App.tsx')
           css_path = Path('upstream/web/src/App.css')
 
           app = app_path.read_text(encoding='utf-8')
 
-          def change(old, new, name):
+          def replace_once(old, new, name):
               global app
-              amount = app.count(old)
+              occurrences = app.count(old)
 
-              if amount != 1:
+              if occurrences != 1:
                   raise RuntimeError(
-                      f'{name}: verwacht precies één locatie, '
-                      f'gevonden {amount}'
+                      f'{name}: gevonden {occurrences} in plaats van 1'
                   )
 
               app = app.replace(old, new, 1)
 
-          # Afbeeldingen lokaal bewaren met IndexedDB
+          def replace_regex(pattern, new, name):
+              global app
+
+              app, occurrences = re.subn(
+                  pattern,
+                  lambda _: new,
+                  app,
+                  count=1
+              )
+
+              if occurrences != 1:
+                  raise RuntimeError(
+                      f'{name}: knop niet gevonden'
+                  )
+
+          # Achtergrond lokaal opslaan in IndexedDB.
+          # De afbeelding wordt niet naar TeamSpeak verstuurd.
+
           helpers = r'''
-          function tsNlBackgroundDb(): Promise<IDBDatabase> {
+          function tsnlOpenBackgroundDb(): Promise<IDBDatabase> {
             return new Promise((resolve, reject) => {
               const request = indexedDB.open(
                 "ptt-ts-nl-background", 1
@@ -1184,20 +194,21 @@ jobs:
               request.onerror = () =>
                 reject(
                   request.error ??
-                  new Error("Database niet beschikbaar")
+                  new Error("Databasefout")
                 );
             });
           }
 
-          async function tsNlReadWallpaper(): Promise<Blob | null> {
-            const db = await tsNlBackgroundDb();
+          async function tsnlReadBackground(): Promise<Blob | null> {
+            const db = await tsnlOpenBackgroundDb();
 
             return new Promise((resolve, reject) => {
-              const transaction = db.transaction(
-                "wallpapers", "readonly"
+              const tx = db.transaction(
+                "wallpapers",
+                "readonly"
               );
 
-              const request = transaction
+              const request = tx
                 .objectStore("wallpapers")
                 .get("selected");
 
@@ -1211,59 +222,61 @@ jobs:
               request.onerror = () =>
                 reject(
                   request.error ??
-                  new Error("Kan achtergrond niet lezen")
+                  new Error("Leesfout")
                 );
 
-              transaction.oncomplete = () =>
+              tx.oncomplete = () =>
                 db.close();
 
-              transaction.onabort = () => {
+              tx.onabort = () => {
                 db.close();
                 reject(
-                  transaction.error ??
+                  tx.error ??
                   new Error("Lezen afgebroken")
                 );
               };
             });
           }
 
-          async function tsNlSaveWallpaper(
-            blob: Blob | null
+          async function tsnlWriteBackground(
+            file: Blob | null
           ): Promise<void> {
-            const db = await tsNlBackgroundDb();
+            const db = await tsnlOpenBackgroundDb();
 
             return new Promise((resolve, reject) => {
-              const transaction = db.transaction(
-                "wallpapers", "readwrite"
+              const tx = db.transaction(
+                "wallpapers",
+                "readwrite"
               );
 
-              const store = transaction.objectStore(
-                "wallpapers"
-              );
-
-              if (blob) {
-                store.put(blob, "selected");
+              if (file) {
+                tx.objectStore("wallpapers").put(
+                  file,
+                  "selected"
+                );
               } else {
-                store.delete("selected");
+                tx.objectStore("wallpapers").delete(
+                  "selected"
+                );
               }
 
-              transaction.oncomplete = () => {
+              tx.oncomplete = () => {
                 db.close();
                 resolve();
               };
 
-              transaction.onerror = () => {
+              tx.onerror = () => {
                 db.close();
                 reject(
-                  transaction.error ??
-                  new Error("Opslaan mislukt")
+                  tx.error ??
+                  new Error("Schrijffout")
                 );
               };
 
-              transaction.onabort = () => {
+              tx.onabort = () => {
                 db.close();
                 reject(
-                  transaction.error ??
+                  tx.error ??
                   new Error("Opslaan afgebroken")
                 );
               };
@@ -1272,11 +285,15 @@ jobs:
 
           '''
 
-          change(
+          # Functies boven AppInner toevoegen.
+
+          replace_once(
               'function AppInner() {',
               helpers + 'function AppInner() {',
-              'Wallpaper opslagfuncties'
+              'Achtergrondopslag'
           )
+
+          # Extra state voor de achtergrondinstellingen.
 
           old_state = (
               'const [tsNlPanel, setTsNlPanel] = '
@@ -1285,110 +302,106 @@ jobs:
 
           new_state = r'''const [tsNlPanel, setTsNlPanel] = useState<"menu" | "info" | "users" | "chat" | "settings" | "background" | null>(null);
 
-            const tsNlBackgroundInput =
+            const tsnlFileInput =
               useRef<HTMLInputElement | null>(null);
 
-            const [tsNlBackgroundBlob, setTsNlBackgroundBlob] =
+            const [tsnlImage, setTsnlImage] =
               useState<Blob | null>(null);
 
-            const [tsNlBackgroundUrl, setTsNlBackgroundUrl] =
+            const [tsnlImageUrl, setTsnlImageUrl] =
               useState<string | null>(null);
 
-            const [tsNlBackgroundError, setTsNlBackgroundError] =
+            const [tsnlImageError, setTsnlImageError] =
               useState("");
 
             useEffect(() => {
-              let active = true;
+              let mounted = true;
 
-              void tsNlReadWallpaper()
-                .then(blob => {
-                  if (active)
-                    setTsNlBackgroundBlob(blob);
+              void tsnlReadBackground()
+                .then(file => {
+                  if (mounted) {
+                    setTsnlImage(file);
+                  }
                 })
                 .catch(() => {
-                  if (active)
-                    setTsNlBackgroundError(
-                      "Opgeslagen achtergrond niet beschikbaar."
+                  if (mounted) {
+                    setTsnlImageError(
+                      "Kon opgeslagen achtergrond niet laden"
                     );
+                  }
                 });
 
               return () => {
-                active = false;
+                mounted = false;
               };
             }, []);
 
             useEffect(() => {
-              if (!tsNlBackgroundBlob) {
-                setTsNlBackgroundUrl(null);
+              if (!tsnlImage) {
+                setTsnlImageUrl(null);
                 return;
               }
 
               const url = URL.createObjectURL(
-                tsNlBackgroundBlob
+                tsnlImage
               );
 
-              setTsNlBackgroundUrl(url);
+              setTsnlImageUrl(url);
 
-              return () => URL.revokeObjectURL(url);
-            }, [tsNlBackgroundBlob]);
+              return () => {
+                URL.revokeObjectURL(url);
+              };
+            }, [tsnlImage]);
           '''
 
-          change(
+          replace_once(
               old_state,
               new_state,
-              'Achtergrond state en opstart'
+              'Achtergrondstatus'
           )
 
-          change(
+          # Gekozen foto als achtergrond van het
+          # bestaande blauwe TeamSpeak-scherm.
+
+          replace_once(
               '<div className="tsnl-shell">',
               r'''<div
                   className="tsnl-shell"
-                  style={tsNlBackgroundUrl ? {
-                    backgroundImage: `linear-gradient(180deg, rgba(13,38,78,.40), rgba(13,38,78,.52)), url("${tsNlBackgroundUrl}")`,
+                  style={tsnlImageUrl ? {
+                    backgroundImage: `linear-gradient(rgba(10,32,68,.45), rgba(10,32,68,.55)), url("${tsnlImageUrl}")`,
                     backgroundSize: "cover",
-                    backgroundPosition: "center center",
-                    backgroundRepeat: "no-repeat",
+                    backgroundPosition: "center",
+                    backgroundRepeat: "no-repeat"
                   } : undefined}
                 >''',
-              'Persoonlijke foto op achtergrond'
+              'Eigen foto zichtbaar maken'
           )
 
-          # Hersteld: juiste knop die uit versie 0.3 komt
-          change(
-              '''<button onClick={() => {
-                          setOptionsDialogOpen(true);
-                          setTsNlPanel(null);
-                        }}>⚙ Instellingen</button>''',
-              '''<button onClick={() =>
-                          setTsNlPanel("settings")
-                        }>⚙ Instellingen</button>''',
-              'Menu instellingen'
+          # Instellingenknop in het bovenste menu.
+          # Reguliere expressie voorkomt problemen
+          # door spaties of lege regels.
+
+          replace_regex(
+              r'<button\s+onClick=\{\(\) => \{\s*setOptionsDialogOpen\(true\);\s*setTsNlPanel\(null\);\s*\}\}>⚙ Instellingen</button>',
+              '<button onClick={() => setTsNlPanel("settings")}>⚙ Instellingen</button>',
+              'Instellingen in menu'
           )
 
-          # Hersteld: juiste onderste instellingenknop
-          change(
-              '''<button
-                      className="tsnl-minor"
-                      title="Instellingen"
-                      onClick={() =>
-                        setOptionsDialogOpen(true)
-                      }
-                    >♧</button>''',
-              '''<button
-                      className="tsnl-minor"
-                      title="Instellingen"
-                      onClick={() =>
-                        setTsNlPanel(v =>
-                          v === "settings" ? null : "settings"
-                        )
-                      }
-                    >♧</button>''',
-              'Instellingen in onderste balk'
+          # Instellingenknop onderaan naast PTT.
+
+          replace_regex(
+              r'<button\s+className="tsnl-minor"\s+title="Instellingen"\s+onClick=\{\(\) =>\s*setOptionsDialogOpen\(true\)\s*\}\s*>♧</button>',
+              '<button className="tsnl-minor" title="Instellingen" onClick={() => setTsNlPanel(v => v === "settings" ? null : "settings")}>♧</button>',
+              'Instellingen onder de PTT-knop'
           )
 
-          settings_content = r'''
+          # Nieuwe instellingenpagina voor de gebruiker.
+
+          settings = r'''
                       {tsNlPanel === "settings" && <>
-                        <strong>⚙ Instellingen</strong>
+                        <strong>
+                          ⚙ Instellingen
+                        </strong>
 
                         <button
                           type="button"
@@ -1397,13 +410,13 @@ jobs:
                             setTsNlPanel(null);
                           }}
                         >
-                          🎙 Audio en PTT-instellingen
+                          🎙 Audio en PTT
                         </button>
 
                         <button
                           type="button"
                           onClick={() => {
-                            setTsNlBackgroundError("");
+                            setTsnlImageError("");
                             setTsNlPanel("background");
                           }}
                         >
@@ -1412,21 +425,22 @@ jobs:
                       </>}
 
                       {tsNlPanel === "background" && <>
-                        <strong>🖼 Eigen achtergrond</strong>
+                        <strong>
+                          🖼 Eigen achtergrond
+                        </strong>
 
-                        <p className="tsnl-background-note">
-                          Kies een foto van jouw computer.
-                          De foto blijft lokaal bewaard en
-                          wordt automatisch hersteld bij het
-                          opnieuw opstarten.
+                        <p>
+                          Kies een afbeelding van jouw computer.
+                          JPG, PNG, GIF en WebP worden ondersteund.
+                          De achtergrond wordt lokaal opgeslagen.
                         </p>
 
                         <input
-                          ref={tsNlBackgroundInput}
+                          ref={tsnlFileInput}
+                          className="tsnl-wallpaper-picker"
                           type="file"
-                          className="tsnl-background-file"
-                          accept="image/jpeg,image/png,image/webp,image/gif"
-                          aria-label="Kies achtergrondafbeelding"
+                          accept="image/jpeg,image/png,image/gif,image/webp"
+                          aria-label="Afbeelding kiezen"
 
                           onChange={e => {
                             const file =
@@ -1434,16 +448,18 @@ jobs:
 
                             e.currentTarget.value = "";
 
-                            if (!file) return;
+                            if (!file) {
+                              return;
+                            }
 
                             if (![
                               "image/jpeg",
                               "image/png",
-                              "image/webp",
-                              "image/gif"
+                              "image/gif",
+                              "image/webp"
                             ].includes(file.type)) {
-                              setTsNlBackgroundError(
-                                "Gebruik JPG, PNG, WebP of GIF."
+                              setTsnlImageError(
+                                "Gebruik JPG, PNG, GIF of WebP"
                               );
                               return;
                             }
@@ -1452,20 +468,20 @@ jobs:
                               file.size >
                               12 * 1024 * 1024
                             ) {
-                              setTsNlBackgroundError(
-                                "Kies een afbeelding kleiner dan 12 MB."
+                              setTsnlImageError(
+                                "Afbeelding is groter dan 12 MB"
                               );
                               return;
                             }
 
-                            void tsNlSaveWallpaper(file)
+                            void tsnlWriteBackground(file)
                               .then(() => {
-                                setTsNlBackgroundBlob(file);
-                                setTsNlBackgroundError("");
+                                setTsnlImage(file);
+                                setTsnlImageError("");
                               })
                               .catch(() => {
-                                setTsNlBackgroundError(
-                                  "Opslaan mislukt. Controleer de schijfruimte."
+                                setTsnlImageError(
+                                  "Opslaan is mislukt"
                                 );
                               });
                           }}
@@ -1474,38 +490,35 @@ jobs:
                         <button
                           type="button"
                           onClick={() =>
-                            tsNlBackgroundInput.current?.click()
+                            tsnlFileInput.current?.click()
                           }
                         >
-                          📁 Afbeelding kiezen
+                          📁 Eigen afbeelding kiezen
                         </button>
 
                         <button
                           type="button"
                           onClick={() => {
-                            void tsNlSaveWallpaper(null)
+                            void tsnlWriteBackground(null)
                               .then(() => {
-                                setTsNlBackgroundBlob(null);
-                                setTsNlBackgroundError("");
+                                setTsnlImage(null);
+                                setTsnlImageError("");
                               })
                               .catch(() => {
-                                setTsNlBackgroundError(
-                                  "Herstellen mislukt."
+                                setTsnlImageError(
+                                  "Herstellen is mislukt"
                                 );
                               });
                           }}
                         >
-                          🔄 Standaard blauwe achtergrond
+                          🔄 Originele blauwe achtergrond
                         </button>
 
-                        {tsNlBackgroundError &&
-                          <p
-                            className="tsnl-background-error"
-                            role="alert"
-                          >
-                            {tsNlBackgroundError}
+                        {tsnlImageError && (
+                          <p role="alert">
+                            {tsnlImageError}
                           </p>
-                        }
+                        )}
 
                         <button
                           type="button"
@@ -1513,17 +526,20 @@ jobs:
                             setTsNlPanel("settings")
                           }
                         >
-                          ← Terug naar instellingen
+                          ← Terug
                         </button>
                       </>}
 
           '''
 
-          change(
-              '                      {tsNlPanel === "info" && <>',
-              settings_content +
-              '                      {tsNlPanel === "info" && <>',
-              'Achtergrondmenu in instellingen'
+          # Invoegen vóór het bestaande informatiepaneel.
+          # Alleen zoeken op de unieke React-code.
+          # Hiermee wordt de vorige buildfout vermeden.
+
+          replace_once(
+              '{tsNlPanel === "info" && <>',
+              settings + '{tsNlPanel === "info" && <>',
+              'Nieuw instellingenpaneel'
           )
 
           app_path.write_text(
@@ -1531,43 +547,54 @@ jobs:
               encoding='utf-8'
           )
 
+          # Achtergrondfoto en leesbare kanaalnamen.
+
           css = r'''
-          /* Eigen achtergrond */
+          /* PTT-TS-NL persoonlijke achtergrond */
 
-          .ts-app.tsnl-android .tsnl-background-file {
+          .ts-app.tsnl-android .tsnl-wallpaper-picker {
             display:none!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-background-note {
-            font-size:13px;
-            line-height:1.5;
-            color:#d8e9ff;
-            margin:4px 0 8px;
-          }
-
-          .ts-app.tsnl-android .tsnl-background-error {
-            color:#ffd4da;
-            font-size:12px;
-            line-height:1.5;
-          }
-
-          .ts-app.tsnl-android .tsnl-channelname,
-          .ts-app.tsnl-android .tsnl-username,
-          .ts-app.tsnl-android .tsnl-spacer {
-            text-shadow:0 1px 4px rgba(10,27,60,.55);
           }
 
           .ts-app.tsnl-android .tsnl-list {
             background:transparent!important;
           }
+
+          .ts-app.tsnl-android .tsnl-username,
+          .ts-app.tsnl-android .tsnl-channelname,
+          .ts-app.tsnl-android .tsnl-spacer {
+            text-shadow:0 1px 5px #081d40;
+          }
           '''
 
-          with css_path.open('a', encoding='utf-8') as output:
+          with css_path.open(
+              'a',
+              encoding='utf-8'
+          ) as output:
               output.write('\n' + css + '\n')
 
+          # Versie aanpassen naar 0.4.3.
+
+          pkg_file = Path('windows/package.json')
+
+          pkg = json.loads(
+              pkg_file.read_text(encoding='utf-8')
+          )
+
+          pkg['version'] = '0.4.3'
+
+          pkg_file.write_text(
+              json.dumps(
+                  pkg,
+                  indent=2,
+                  ensure_ascii=False
+              ) + '\n',
+              encoding='utf-8'
+          )
+
           print(
-              "Eigen achtergrond toegevoegd en "
-              "instellingenknoppen hersteld"
+              'PTT-TS-NL Windows 0.4.3 - '
+              'Eigen achtergrond toegevoegd'
           )
           PY
 
@@ -1587,7 +614,7 @@ jobs:
           npm run build
           npm prune --omit=dev
 
-      - name: Interface en TypeScript controleren
+      - name: Windows scherm bouwen en TypeScript controleren
         shell: bash
         env:
           VITE_DONATE_URL: ""
@@ -1597,7 +624,7 @@ jobs:
           npm ci
           npm run build
 
-      - name: TeamSpeak onderdelen voor Windows bundelen
+      - name: Runtime onderdelen samenvoegen
         shell: bash
         run: |
           set -euo pipefail
@@ -1629,7 +656,7 @@ jobs:
 
           node --check windows/main.cjs
 
-      - name: Installer en portable Windows EXE bouwen
+      - name: Windows installer en portable EXE bouwen
         shell: bash
         run: |
           set -euo pipefail
@@ -1637,7 +664,7 @@ jobs:
           npm install --no-audit --no-fund
           npm run dist
 
-      - name: Windows EXE downloaden via Artifacts
+      - name: Download PTT-TS-NL Windows
         uses: actions/upload-artifact@v4
         with:
           name: PTT-TS-NL-Windows-64bit
