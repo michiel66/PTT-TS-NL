@@ -1,5 +1,4 @@
-
-name: Bouw PTT-TS-NL Windows 0.4.3 Eigen achtergrond
+name: Bouw PTT-TS-NL Windows 0.4.4
 
 on:
   workflow_dispatch:
@@ -15,24 +14,23 @@ jobs:
     name: PTT-TS-NL Windows 64-bit
     runs-on: windows-latest
     timeout-minutes: 90
-
     env:
       WEBSPEAK3_COMMIT: c2b52b323d2ef10e388b2b600444a98390c5cc7a
       CMAKE_POLICY_VERSION_MINIMUM: "3.5"
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
     steps:
-      - name: Huidige repository ophalen
+      - name: Project ophalen
         uses: actions/checkout@v4
 
-      - name: Bewezen groene versie 0.3.0 ophalen
+      - name: Eerder groen gebouwde Android-weergave ophalen
         uses: actions/checkout@v4
         with:
           repository: michiel66/PTT-TS-NL
           ref: 0f0c7cd2416c2a8492dc8f457bc8c629134c4eb1
           path: known-good
 
-      - name: Werkende Windows TeamSpeak basis ophalen
+      - name: Werkende TeamSpeak Windows basis ophalen
         uses: actions/checkout@v4
         with:
           repository: michiel66/PTTConnect-PC
@@ -45,14 +43,14 @@ jobs:
           repository: michiel66/TS6-Droid-NL
           path: android-nl
 
-      - name: Android schermen en kleuren ophalen
+      - name: Originele Android broncode ophalen
         uses: actions/checkout@v4
         with:
           repository: YUAXI/TS6_Droid_CN
           ref: 56d3b4d1991a4c565b1f75f419f4563e772f9614
           path: android-source
 
-      - name: Node.js installeren
+      - name: Node installeren
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -65,7 +63,7 @@ jobs:
       - name: Rust installeren
         uses: dtolnay/rust-toolchain@stable
 
-      - name: TeamSpeak broncode ophalen
+      - name: TeamSpeak engine ophalen
         shell: bash
         run: |
           set -euo pipefail
@@ -74,600 +72,25 @@ jobs:
           git checkout "$WEBSPEAK3_COMMIT"
           git submodule update --init --recursive
 
-      - name: Werkende TeamSpeak en PTT basis toepassen
+      - name: Werkende TeamSpeak en PTT functies toepassen
         shell: bash
         run: |
           set -euo pipefail
           python pttbase/windows/patch_webspeak3.py
 
-      - name: Succesvolle Android-schermcode van versie 0.3.0 toepassen
+      - name: Android-weergave uit groene versie 0.3.0 toepassen zonder WSL
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
-          import subprocess
 
-          src = Path(
-              'known-good/.github/workflows/build-windows.yml'
+          workflow = Path("known-good/.github/workflows/build-windows.yml")
+          source = workflow.read_text(encoding="utf-8")
+          marker = (
+              "      - name: Bouw alleen het TS6 Droid scherm met live kanalen en PTT\n"
+              "        shell: bash\n"
+              "        run: |\n"
           )
-
-          content = src.read_text(encoding='utf-8')
-
-          anchor = (
-              '      - name: Bouw alleen het TS6 Droid scherm met live kanalen en PTT\n'
-              '        shell: bash\n'
-              '        run: |\n'
-          )
-
-          if content.count(anchor) != 1:
-              raise RuntimeError(
-                  'De bewezen Android-schermstap ontbreekt'
-              )
-
-          block = content.split(anchor, 1)[1].split(
-              '\n      - name:', 1
-          )[0]
-
-          commands = '\n'.join(
-              line[10:] if line.startswith('          ') else line
-              for line in block.splitlines()
-          ) + '\n'
-
-          script = Path('apply-known-good.sh')
-          script.write_text(commands, encoding='utf-8')
-
-          print(
-              'Voer de originele, eerder groene versie 0.3.0 uit'
-          )
-
-          subprocess.run(
-              ['bash', str(script)],
-              check=True
-          )
-          PY
-
-      - name: Eigen achtergrond toevoegen met robuuste koppeling
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import json
-          import re
-
-          app_path = Path('upstream/web/src/App.tsx')
-          css_path = Path('upstream/web/src/App.css')
-
-          app = app_path.read_text(encoding='utf-8')
-
-          def replace_once(old, new, name):
-              global app
-              occurrences = app.count(old)
-
-              if occurrences != 1:
-                  raise RuntimeError(
-                      f'{name}: gevonden {occurrences} in plaats van 1'
-                  )
-
-              app = app.replace(old, new, 1)
-
-          def replace_regex(pattern, new, name):
-              global app
-
-              app, occurrences = re.subn(
-                  pattern,
-                  lambda _: new,
-                  app,
-                  count=1
-              )
-
-              if occurrences != 1:
-                  raise RuntimeError(
-                      f'{name}: knop niet gevonden'
-                  )
-
-          # Achtergrond lokaal opslaan in IndexedDB.
-          # De afbeelding wordt niet naar TeamSpeak verstuurd.
-
-          helpers = r'''
-          function tsnlOpenBackgroundDb(): Promise<IDBDatabase> {
-            return new Promise((resolve, reject) => {
-              const request = indexedDB.open(
-                "ptt-ts-nl-background", 1
-              );
-
-              request.onupgradeneeded = () => {
-                if (
-                  !request.result.objectStoreNames
-                    .contains("wallpapers")
-                ) {
-                  request.result.createObjectStore(
-                    "wallpapers"
-                  );
-                }
-              };
-
-              request.onsuccess = () =>
-                resolve(request.result);
-
-              request.onerror = () =>
-                reject(
-                  request.error ??
-                  new Error("Databasefout")
-                );
-            });
-          }
-
-          async function tsnlReadBackground(): Promise<Blob | null> {
-            const db = await tsnlOpenBackgroundDb();
-
-            return new Promise((resolve, reject) => {
-              const tx = db.transaction(
-                "wallpapers",
-                "readonly"
-              );
-
-              const request = tx
-                .objectStore("wallpapers")
-                .get("selected");
-
-              request.onsuccess = () =>
-                resolve(
-                  request.result instanceof Blob
-                    ? request.result
-                    : null
-                );
-
-              request.onerror = () =>
-                reject(
-                  request.error ??
-                  new Error("Leesfout")
-                );
-
-              tx.oncomplete = () =>
-                db.close();
-
-              tx.onabort = () => {
-                db.close();
-                reject(
-                  tx.error ??
-                  new Error("Lezen afgebroken")
-                );
-              };
-            });
-          }
-
-          async function tsnlWriteBackground(
-            file: Blob | null
-          ): Promise<void> {
-            const db = await tsnlOpenBackgroundDb();
-
-            return new Promise((resolve, reject) => {
-              const tx = db.transaction(
-                "wallpapers",
-                "readwrite"
-              );
-
-              if (file) {
-                tx.objectStore("wallpapers").put(
-                  file,
-                  "selected"
-                );
-              } else {
-                tx.objectStore("wallpapers").delete(
-                  "selected"
-                );
-              }
-
-              tx.oncomplete = () => {
-                db.close();
-                resolve();
-              };
-
-              tx.onerror = () => {
-                db.close();
-                reject(
-                  tx.error ??
-                  new Error("Schrijffout")
-                );
-              };
-
-              tx.onabort = () => {
-                db.close();
-                reject(
-                  tx.error ??
-                  new Error("Opslaan afgebroken")
-                );
-              };
-            });
-          }
-
-          '''
-
-          # Functies boven AppInner toevoegen.
-
-          replace_once(
-              'function AppInner() {',
-              helpers + 'function AppInner() {',
-              'Achtergrondopslag'
-          )
-
-          # Extra state voor de achtergrondinstellingen.
-
-          old_state = (
-              'const [tsNlPanel, setTsNlPanel] = '
-              'useState<"menu" | "info" | "users" | "chat" | null>(null);'
-          )
-
-          new_state = r'''const [tsNlPanel, setTsNlPanel] = useState<"menu" | "info" | "users" | "chat" | "settings" | "background" | null>(null);
-
-            const tsnlFileInput =
-              useRef<HTMLInputElement | null>(null);
-
-            const [tsnlImage, setTsnlImage] =
-              useState<Blob | null>(null);
-
-            const [tsnlImageUrl, setTsnlImageUrl] =
-              useState<string | null>(null);
-
-            const [tsnlImageError, setTsnlImageError] =
-              useState("");
-
-            useEffect(() => {
-              let mounted = true;
-
-              void tsnlReadBackground()
-                .then(file => {
-                  if (mounted) {
-                    setTsnlImage(file);
-                  }
-                })
-                .catch(() => {
-                  if (mounted) {
-                    setTsnlImageError(
-                      "Kon opgeslagen achtergrond niet laden"
-                    );
-                  }
-                });
-
-              return () => {
-                mounted = false;
-              };
-            }, []);
-
-            useEffect(() => {
-              if (!tsnlImage) {
-                setTsnlImageUrl(null);
-                return;
-              }
-
-              const url = URL.createObjectURL(
-                tsnlImage
-              );
-
-              setTsnlImageUrl(url);
-
-              return () => {
-                URL.revokeObjectURL(url);
-              };
-            }, [tsnlImage]);
-          '''
-
-          replace_once(
-              old_state,
-              new_state,
-              'Achtergrondstatus'
-          )
-
-          # Gekozen foto als achtergrond van het
-          # bestaande blauwe TeamSpeak-scherm.
-
-          replace_once(
-              '<div className="tsnl-shell">',
-              r'''<div
-                  className="tsnl-shell"
-                  style={tsnlImageUrl ? {
-                    backgroundImage: `linear-gradient(rgba(10,32,68,.45), rgba(10,32,68,.55)), url("${tsnlImageUrl}")`,
-                    backgroundSize: "cover",
-                    backgroundPosition: "center",
-                    backgroundRepeat: "no-repeat"
-                  } : undefined}
-                >''',
-              'Eigen foto zichtbaar maken'
-          )
-
-          # Instellingenknop in het bovenste menu.
-          # Reguliere expressie voorkomt problemen
-          # door spaties of lege regels.
-
-          replace_regex(
-              r'<button\s+onClick=\{\(\) => \{\s*setOptionsDialogOpen\(true\);\s*setTsNlPanel\(null\);\s*\}\}>⚙ Instellingen</button>',
-              '<button onClick={() => setTsNlPanel("settings")}>⚙ Instellingen</button>',
-              'Instellingen in menu'
-          )
-
-          # Instellingenknop onderaan naast PTT.
-
-          replace_regex(
-              r'<button\s+className="tsnl-minor"\s+title="Instellingen"\s+onClick=\{\(\) =>\s*setOptionsDialogOpen\(true\)\s*\}\s*>♧</button>',
-              '<button className="tsnl-minor" title="Instellingen" onClick={() => setTsNlPanel(v => v === "settings" ? null : "settings")}>♧</button>',
-              'Instellingen onder de PTT-knop'
-          )
-
-          # Nieuwe instellingenpagina voor de gebruiker.
-
-          settings = r'''
-                      {tsNlPanel === "settings" && <>
-                        <strong>
-                          ⚙ Instellingen
-                        </strong>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOptionsDialogOpen(true);
-                            setTsNlPanel(null);
-                          }}
-                        >
-                          🎙 Audio en PTT
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setTsnlImageError("");
-                            setTsNlPanel("background");
-                          }}
-                        >
-                          🖼 Eigen achtergrond
-                        </button>
-                      </>}
-
-                      {tsNlPanel === "background" && <>
-                        <strong>
-                          🖼 Eigen achtergrond
-                        </strong>
-
-                        <p>
-                          Kies een afbeelding van jouw computer.
-                          JPG, PNG, GIF en WebP worden ondersteund.
-                          De achtergrond wordt lokaal opgeslagen.
-                        </p>
-
-                        <input
-                          ref={tsnlFileInput}
-                          className="tsnl-wallpaper-picker"
-                          type="file"
-                          accept="image/jpeg,image/png,image/gif,image/webp"
-                          aria-label="Afbeelding kiezen"
-
-                          onChange={e => {
-                            const file =
-                              e.currentTarget.files?.[0];
-
-                            e.currentTarget.value = "";
-
-                            if (!file) {
-                              return;
-                            }
-
-                            if (![
-                              "image/jpeg",
-                              "image/png",
-                              "image/gif",
-                              "image/webp"
-                            ].includes(file.type)) {
-                              setTsnlImageError(
-                                "Gebruik JPG, PNG, GIF of WebP"
-                              );
-                              return;
-                            }
-
-                            if (
-                              file.size >
-                              12 * 1024 * 1024
-                            ) {
-                              setTsnlImageError(
-                                "Afbeelding is groter dan 12 MB"
-                              );
-                              return;
-                            }
-
-                            void tsnlWriteBackground(file)
-                              .then(() => {
-                                setTsnlImage(file);
-                                setTsnlImageError("");
-                              })
-                              .catch(() => {
-                                setTsnlImageError(
-                                  "Opslaan is mislukt"
-                                );
-                              });
-                          }}
-                        />
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            tsnlFileInput.current?.click()
-                          }
-                        >
-                          📁 Eigen afbeelding kiezen
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void tsnlWriteBackground(null)
-                              .then(() => {
-                                setTsnlImage(null);
-                                setTsnlImageError("");
-                              })
-                              .catch(() => {
-                                setTsnlImageError(
-                                  "Herstellen is mislukt"
-                                );
-                              });
-                          }}
-                        >
-                          🔄 Originele blauwe achtergrond
-                        </button>
-
-                        {tsnlImageError && (
-                          <p role="alert">
-                            {tsnlImageError}
-                          </p>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setTsNlPanel("settings")
-                          }
-                        >
-                          ← Terug
-                        </button>
-                      </>}
-
-          '''
-
-          # Invoegen vóór het bestaande informatiepaneel.
-          # Alleen zoeken op de unieke React-code.
-          # Hiermee wordt de vorige buildfout vermeden.
-
-          replace_once(
-              '{tsNlPanel === "info" && <>',
-              settings + '{tsNlPanel === "info" && <>',
-              'Nieuw instellingenpaneel'
-          )
-
-          app_path.write_text(
-              app,
-              encoding='utf-8'
-          )
-
-          # Achtergrondfoto en leesbare kanaalnamen.
-
-          css = r'''
-          /* PTT-TS-NL persoonlijke achtergrond */
-
-          .ts-app.tsnl-android .tsnl-wallpaper-picker {
-            display:none!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-list {
-            background:transparent!important;
-          }
-
-          .ts-app.tsnl-android .tsnl-username,
-          .ts-app.tsnl-android .tsnl-channelname,
-          .ts-app.tsnl-android .tsnl-spacer {
-            text-shadow:0 1px 5px #081d40;
-          }
-          '''
-
-          with css_path.open(
-              'a',
-              encoding='utf-8'
-          ) as output:
-              output.write('\n' + css + '\n')
-
-          # Versie aanpassen naar 0.4.3.
-
-          pkg_file = Path('windows/package.json')
-
-          pkg = json.loads(
-              pkg_file.read_text(encoding='utf-8')
-          )
-
-          pkg['version'] = '0.4.3'
-
-          pkg_file.write_text(
-              json.dumps(
-                  pkg,
-                  indent=2,
-                  ensure_ascii=False
-              ) + '\n',
-              encoding='utf-8'
-          )
-
-          print(
-              'PTT-TS-NL Windows 0.4.3 - '
-              'Eigen achtergrond toegevoegd'
-          )
-          PY
-
-      - name: TeamSpeak connector bouwen
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd upstream/connector
-          cargo build --release
-
-      - name: TeamSpeak gateway bouwen
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd upstream/gateway
-          npm ci
-          npm run build
-          npm prune --omit=dev
-
-      - name: Windows scherm bouwen en TypeScript controleren
-        shell: bash
-        env:
-          VITE_DONATE_URL: ""
-        run: |
-          set -euo pipefail
-          cd upstream/web
-          npm ci
-          npm run build
-
-      - name: Runtime onderdelen samenvoegen
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p windows/runtime/web
-          mkdir -p windows/runtime/gateway
-          mkdir -p windows/runtime/connector
-
-          cp -R upstream/web/dist/. \
-            windows/runtime/web/
-
-          cp -R upstream/gateway/dist \
-            windows/runtime/gateway/dist
-
-          cp -R upstream/gateway/node_modules \
-            windows/runtime/gateway/node_modules
-
-          cp upstream/connector/target/release/ts-connector.exe \
-            windows/runtime/connector/ts-connector.exe
-
-          cp upstream/LICENSE \
-            windows/runtime/LICENSE-WebSpeak3.txt
-
-          cp android-source/LICENSE \
-            windows/runtime/LICENSE-TS6-Droid-GPLv3.txt
-
-          test -s \
-            windows/runtime/connector/ts-connector.exe
-
-          node --check windows/main.cjs
-
-      - name: Windows installer en portable EXE bouwen
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd windows
-          npm install --no-audit --no-fund
-          npm run dist
-
-      - name: Download PTT-TS-NL Windows
-        uses: actions/upload-artifact@v4
-        with:
-          name: PTT-TS-NL-Windows-64bit
-          path: windows/dist/*.exe
-          if-no-files-found: error
-          retention-days: 30
+          assert source.count(marker) == 1, "Groene bouwstap ontbreekt"
+          block = source.split(marker, 1)[1].split("\n      - name:", 1)[0]
