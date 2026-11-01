@@ -1,5 +1,5 @@
 
-name: Bouw PTT Direct Windows 0.6.2 - TG favorieten en stabiele microfoon
+name: Bouw PTT Direct Windows 0.6.2 Herstel favorieten en microfoon
 
 on:
   workflow_dispatch:
@@ -277,11 +277,21 @@ jobs:
               app = app.replace(old, new)
 
           # Het oude myTeamSpeak-favorietenvenster is vervangen door eigen TG-favorieten.
-          once('''<button onClick={() => {setFavoritesDialogMode({kind:"manage"});setTsNlPanel(null);}}>⭐ Favorieten</button>''', '''<button onClick={() => {
+          # Verschillende regels en inspringing zijn toegestaan.
+          favorite_pattern = (
+              r'<button\s+onClick=\{\(\)\s*=>\s*\{\s*'
+              r'setFavoritesDialogMode\(\{\s*kind\s*:\s*"manage"\s*\}\);\s*'
+              r'setTsNlPanel\(null\);\s*\}\s*\}\s*>\s*'
+              r'⭐\s*Favorieten\s*</button>'
+          )
+          favorite_button = '''<button onClick={() => {
                                     setTsNlPanel(null);
                                     setPttDirectFavoriteError("");
                                     setPttDirectFavoritesOpen(true);
-                                  }}>⭐ Favorieten</button>''', 'Favorietenmenu zonder myTeamSpeak Bookmarks')
+                                  }}>⭐ Favorieten</button>'''
+          app, count = re.subn(favorite_pattern, lambda _: favorite_button, app, count=1)
+          if count != 1:
+              raise RuntimeError(f'Favorietenknop in PTT Direct menu: {count} overeenkomsten')
 
           # In serverinformatie de gekozen TG tonen, nooit een adres.
           info_pattern = (
@@ -373,7 +383,8 @@ jobs:
           if count != 1:
               raise RuntimeError(f'Eigen TG favorieten dialoog: {count} overeenkomsten')
 
-          # Microfoon opnieuw starten indien die is gestopt bij serverwissel.
+          # Bestaande Microfoon wordt na server-wissel opnieuw aangemaakt;
+          # uitsluitend indien die door de oude sessie is gestopt.
           once('''  // Enable the mic automatically on page load (voice activation still gates''', '''  useEffect(() => {
               if (connected && !micCaptureRef.current) {
                 void startMic();
@@ -382,7 +393,7 @@ jobs:
 
             // Enable the mic automatically on page load (voice activation still gates''', 'Microfoon na TG-wissel herstellen')
 
-          # Electron meldt de actieve verbindingen af voordat Windows afsluit.
+          # Electron meldt eerst alle TeamSpeak-sessies af. Event callback neemt stabiele refs.
           once('''  const closeSessionTab = (id: string) => {''', '''  useEffect(() => {
               const onPttDirectQuit = () => {
                 micCaptureRef.current?.setPushToTalk(false);
@@ -400,7 +411,7 @@ jobs:
 
           with css_path.open('a', encoding='utf-8') as file:
               file.write(r'''
-          /* Alleen de nieuwe favorietendialoog; bestaande multicolor blijft intact. */
+          /* Alleen de twee PTT Direct dialoogvensters, bestaande multicolor blijft intact. */
           .pttdirect-favorites {
             width:min(520px,calc(100vw - 28px)); max-height:85vh; overflow:auto;
             display:flex; flex-direction:column; gap:12px; padding:24px;
